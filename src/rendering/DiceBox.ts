@@ -36,7 +36,6 @@ import {
   ShadowMaterial,
   SRGBColorSpace,
   TextureLoader,
-  Vector2,
   Vector3,
   WebGPURenderer,
 } from 'three/webgpu';
@@ -201,7 +200,9 @@ export class DiceBox {
 
     // Detect actual backend after renderer init (async for WebGPU)
     await this.renderer.init();
-    this.backend = this.renderer.backend?.isWebGPUBackend ? 'webgpu' : 'webgl2';
+    const backendInfo = this.renderer.backend as { constructor?: { name?: string } } | undefined;
+    const backendName = backendInfo?.constructor?.name?.toLowerCase() ?? '';
+    this.backend = backendName.includes('webgpu') ? 'webgpu' : 'webgl2';
 
     // Shadow map settings
     this.renderer.shadowMap.enabled = this.config.shadowQuality !== 'low' || this.config.imageQuality !== 'low';
@@ -263,8 +264,10 @@ export class DiceBox {
 
   private loadHDREnvironment(): Promise<void> {
     return new Promise((resolve) => {
-      const pmremGen = new PMREMGenerator(this.renderer as unknown as Parameters<typeof PMREMGenerator>[0]);
-      pmremGen.compileEquirectangularShader();
+      const pmremGen = new PMREMGenerator(
+        this.renderer as unknown as ConstructorParameters<typeof PMREMGenerator>[0],
+      );
+      void pmremGen.compileEquirectangularShader();
 
       // Load roughness maps for texture cache (used by DiceFactory in Stage 4)
       const texLoader = new TextureLoader();
@@ -428,7 +431,6 @@ export class DiceBox {
       this.light.position.set(0, ch / 20, maxDim / 2);
     }
     this.light.target.position.set(0, 0, 0);
-    this.light.distance = 0;
 
     const hasShadows =
       this.renderer.shadowMap.enabled;
@@ -439,7 +441,6 @@ export class DiceBox {
       this.light.shadow.mapSize.set(shadowMapSize, shadowMapSize);
       this.light.shadow.camera.near = maxDim / 10;
       this.light.shadow.camera.far = maxDim * 5;
-      this.light.shadow.camera.fov = 50;
       this.light.shadow.bias = -0.0001;
 
       const halfW = cw / 2;

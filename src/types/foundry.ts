@@ -50,6 +50,11 @@ declare global {
     alias?: string;
   }
 
+  interface Actor {
+    id: string;
+    hasPlayerOwner: boolean;
+  }
+
   /** A Foundry Roll object. */
   interface Roll {
     dice: DiceTerm[];
@@ -209,6 +214,14 @@ declare global {
     get(id: string): User | undefined;
   }
 
+  interface GameActors {
+    get(id: string): Actor | undefined;
+  }
+
+  interface GameCombat {
+    started: boolean;
+  }
+
   interface GameCanvas {
     app: {
       renderer: {
@@ -226,6 +239,8 @@ declare global {
   interface Game {
     user: User;
     users: GameUsers;
+    actors: GameActors;
+    combat?: GameCombat | null;
     settings: GameSettings;
     i18n: GameI18n;
     audio: GameAudio;

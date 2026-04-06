@@ -50,8 +50,8 @@ export abstract class DiceSFX {
   }
 
   /** Called once when the SFX type is first used. Override for async asset loading. */
-  static async init(): Promise<boolean> {
-    return true;
+  static init(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   /** Play the special effect. Must be implemented by subclasses. */
@@ -72,6 +72,8 @@ export abstract class DiceSFX {
     _sfxLine: SFXLine,
     _id: string,
   ): { content: string; data: Record<string, unknown> } {
+    void _sfxLine;
+    void _id;
     return { content: '', data: {} };
   }
 }

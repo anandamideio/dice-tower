@@ -2002,10 +2002,18 @@ export class DiceBox {
     this.timeUniform.value = performance.now() / 1000;
 
     if (this.realisticLighting && this.renderPipeline) {
-      // Fire-and-forget; WebGPURenderer handles the Promise internally
-      void this.renderPipeline.renderAsync();
+      const pipeline = this.renderPipeline as unknown as {
+        render?: () => void;
+        renderAsync?: () => Promise<void>;
+      };
+
+      if (typeof pipeline.render === 'function') {
+        pipeline.render();
+      } else if (typeof pipeline.renderAsync === 'function') {
+        void pipeline.renderAsync();
+      }
     } else {
-      void this.renderer.renderAsync(this.scene, this.camera);
+      this.renderer.render(this.scene, this.camera);
     }
   }
 

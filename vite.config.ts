@@ -1,16 +1,17 @@
 import { defineConfig, loadEnv } from 'vite';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const foundryProxyTarget = env.FOUNDRY_PROXY_TARGET;
+  const workerPlugins: import('vite').PluginOption[] = [
+    wasm() as unknown as import('vite').PluginOption
+  ];
 
   return {
     plugins: [
       wasm(),
-      topLevelAwait(),
       viteStaticCopy({
         targets: [
           { src: 'module.json', dest: '.' },
@@ -22,6 +23,7 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       emptyOutDir: true,
       sourcemap: true,
+      target: 'esnext',
       rollupOptions: {
         input: 'src/main.ts',
         output: {
@@ -31,6 +33,14 @@ export default defineConfig(({ mode }) => {
           assetFileNames: 'assets/[name]-[hash][extname]'
         }
       }
+    },
+    optimizeDeps: {
+      exclude: ['@dimforge/rapier3d']
+    },
+    worker: {
+      format: 'es',
+      target: 'esnext',
+      plugins: () => workerPlugins
     },
     server: {
       host: '0.0.0.0',

@@ -68,10 +68,10 @@ export interface Colorset {
   foreground: string | string[];
   /** Dice body background color — hex string or array for random selection. */
   background: string | string[];
-  /** Label outline color — hex string or "none". */
-  outline: string;
-  /** Edge/bevel color — hex string. */
-  edge?: string;
+  /** Label outline color — hex string, "none", or array for random selection. */
+  outline: string | string[];
+  /** Edge/bevel color — hex string or array for random selection. */
+  edge?: string | string[];
   /** Texture ID to apply (from TEXTURELIST). */
   texture?: string | string[];
   /** Material override. */

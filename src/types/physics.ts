@@ -22,6 +22,14 @@ export interface Quat {
   w: number;
 }
 
+/** Per-edge margins used to shrink the rollable area. */
+export interface PhysicsMargin {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 /** Per-frame transform for a single physics body. */
 export interface BodyTransform {
   position: Vec3;
@@ -34,8 +42,8 @@ export interface PhysicsConfig {
   width: number;
   /** Play area height (pixels, scaled to physics units). */
   height: number;
-  /** Barrier inset margin. */
-  margin: number;
+  /** Barrier inset margin (single value or per-edge values). */
+  margin: number | PhysicsMargin;
   /** Whether to mute sounds for secret rolls. */
   muteSoundSecretRolls: boolean;
 }
@@ -60,6 +68,10 @@ export interface DiceBodyDef {
   angularVelocity: Vec3;
   /** Initial orientation. */
   rotation: Quat;
+  /** Optional simulation step at which this die enters the world. */
+  startAtIteration?: number;
+  /** Whether this die belongs to a secret roll (for sound muting rules). */
+  secretRoll?: boolean;
 }
 
 /**
@@ -79,6 +91,8 @@ export interface ThrowParams {
 export interface SimulationFrames {
   /** Number of simulation steps recorded. */
   frameCount: number;
+  /** Body IDs in the same order used by the packed transform arrays. */
+  bodyIds: string[];
   /**
    * Per-body transforms indexed [bodyIndex][frameIndex].
    * Stored as flat typed arrays for efficient transfer.

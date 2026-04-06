@@ -8,6 +8,7 @@
 import type { Colorset, DiceAppearance, TextureDefinition } from '../types/appearance.js';
 import type { DicePresetData, SFXLine } from '../types/dice.js';
 import type { Mesh } from 'three/webgpu';
+import type { DiceMeshRef } from './dice-sfx.js';
 
 /** The DiceFactory manages geometry, materials, presets, and systems. */
 export interface IDiceFactory {
@@ -60,7 +61,7 @@ export interface IDiceSFXClass {
   /** Return dialog content for the SFX config UI. */
   getDialogContent?(sfxLine: SFXLine, id: string): { content: string; data: Record<string, unknown> };
   /** Constructor. */
-  new (box: IDiceBox, dicemesh: unknown, options?: Record<string, unknown>): {
+  new (box: IDiceBox, dicemesh: DiceMeshRef, options?: Record<string, unknown>): {
     play(): Promise<void>;
   };
 }

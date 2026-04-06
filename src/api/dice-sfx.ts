@@ -16,7 +16,17 @@ export interface DiceMeshRef {
     secretRoll?: boolean;
     [key: string]: unknown;
   };
+  userData?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+interface SFXBoxRuntime {
+  sfxVolume?: number;
+  muteSoundSecretRollsEnabled?: boolean;
+  muteSoundSecretRolls?: boolean;
+  diceFactory?: {
+    baseScale?: number;
+  };
 }
 
 /**
@@ -46,7 +56,18 @@ export abstract class DiceSFX {
     this.options = { ...defaults, ...options };
     this.dicemesh = dicemesh;
     this.box = box;
-    this.volume = this.options.muteSound ? 0 : 1;
+
+    const runtimeBox = box as unknown as SFXBoxRuntime;
+    const baseVolume =
+      typeof runtimeBox.sfxVolume === 'number' && Number.isFinite(runtimeBox.sfxVolume)
+        ? Math.max(0, Math.min(1, runtimeBox.sfxVolume))
+        : 1;
+
+    const secretRollMuted =
+      dicemesh.options.secretRoll === true &&
+      (runtimeBox.muteSoundSecretRollsEnabled === true || runtimeBox.muteSoundSecretRolls === true);
+
+    this.volume = this.options.muteSound || secretRollMuted ? 0 : baseVolume;
   }
 
   /** Called once when the SFX type is first used. Override for async asset loading. */
@@ -56,6 +77,35 @@ export abstract class DiceSFX {
 
   /** Play the special effect. Must be implemented by subclasses. */
   abstract play(): Promise<void>;
+
+  /** Compute a die-shape-adjusted effect scale based on the current dice base scale. */
+  computeScale(): number {
+    const runtimeBox = this.box as unknown as SFXBoxRuntime;
+    const baseScale = runtimeBox.diceFactory?.baseScale ?? 75;
+
+    let scale = baseScale / 100;
+    switch (this.dicemesh.shape) {
+      case 'd2':
+        scale *= 1.3;
+        break;
+      case 'd4':
+        scale *= 1.1;
+        break;
+      case 'd8':
+        scale *= 1.1;
+        break;
+      case 'd12':
+        scale *= 1.2;
+        break;
+      case 'd20':
+        scale *= 1.3;
+        break;
+      default:
+        break;
+    }
+
+    return scale;
+  }
 
   /** Helper to load an asset via a Three.js-style loader. */
   static async loadAsset<T>(
@@ -69,11 +119,34 @@ export abstract class DiceSFX {
 
   /** Return config dialog content for the SFX settings UI. Override in subclasses. */
   static getDialogContent(
-    _sfxLine: SFXLine,
-    _id: string,
+    sfxLine: SFXLine,
+    id: string,
   ): { content: string; data: Record<string, unknown> } {
-    void _sfxLine;
-    void _id;
-    return { content: '', data: {} };
+    const isGlobal = sfxLine.options?.isGlobal ?? false;
+    const muteSound = sfxLine.options?.muteSound ?? false;
+
+    const disabled = game.user.isGM ? '' : 'disabled="disabled"';
+    const checkedGlobal = isGlobal ? 'checked="checked"' : '';
+    const checkedMute = muteSound ? 'checked="checked"' : '';
+
+    return {
+      content: `<div class="form-group">
+  <label>{{localize "DICESONICE.sfxOptionsIsGlobal"}}</label>
+  <div class="form-fields">
+    <input type="checkbox" name="sfxLine[${id}][options][isGlobal]" data-dtype="Boolean" ${disabled} ${checkedGlobal} />
+  </div>
+</div>
+<div class="form-group">
+  <label>{{localize "DICESONICE.sfxOptionsMuteSound"}}</label>
+  <div class="form-fields">
+    <input type="checkbox" name="sfxLine[${id}][options][muteSound]" data-dtype="Boolean" ${disabled} ${checkedMute} />
+  </div>
+</div>`,
+      data: {
+        id,
+        isGlobal,
+        muteSound,
+      },
+    };
   }
 }

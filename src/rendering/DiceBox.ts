@@ -75,8 +75,10 @@ import type { SoundsSurface } from '../types/settings.js';
 import { mergeQueuedRollCommands } from '../dice/dice-notation.js';
 import { PhysicsWorkerClient } from '../physics/physics-worker-client.js';
 import { DICE_SHAPE_DEFINITIONS, getFaceIndices } from '../physics/dice-shape-definitions.js';
-import type { IDiceFactory } from '../api/dice3d.js';
+import type { IDiceFactory, IDiceSFXClass } from '../api/dice3d.js';
+import type { DiceMeshRef } from '../api/dice-sfx.js';
 import { SoundManager, type CollisionDieMetadata } from '../audio/sound-manager.js';
+import { DiceSFXManager } from '../sfx/dice-sfx-manager.js';
 
 // ─── Configuration passed to DiceBox ─────────────────────────────────────────
 
@@ -541,7 +543,14 @@ export class DiceBox {
   private maxDiceNumber = DEFAULT_MAX_DICE;
   private queueMergeWindowMs = DEFAULT_QUEUE_MERGE_WINDOW_MS;
   private muteSoundSecretRolls = false;
+  private sfxVolume = 0.5;
   private readonly soundManager = new SoundManager();
+  private readonly sfxManager = new DiceSFXManager({
+    onQueueEmpty: () => {
+      this.handleSfxQueueDrained();
+    },
+  });
+  private pendingHideAfterSfx = false;
   private readonly bodyCollisionAudio = new Map<string, CollisionDieMetadata>();
 
   private commandQueue: DiceThrowCommand[] = [];
@@ -665,6 +674,9 @@ export class DiceBox {
     this.maxDiceNumber = Math.max(1, options.maxDiceNumber ?? this.maxDiceNumber);
     this.queueMergeWindowMs = Math.max(0, options.queueMergeWindowMs ?? this.queueMergeWindowMs);
     this.muteSoundSecretRolls = options.muteSoundSecretRolls ?? this.muteSoundSecretRolls;
+    if (typeof options.soundsVolume === 'number' && Number.isFinite(options.soundsVolume)) {
+      this.sfxVolume = clamp(options.soundsVolume, 0, 1);
+    }
     this.soundManager.update({
       sounds: options.sounds,
       soundsSurface: options.soundsSurface,
@@ -702,6 +714,18 @@ export class DiceBox {
 
   setInteractivityEnabled(enabled: boolean): void {
     this.allowInteractivity = enabled;
+  }
+
+  addSFXTrigger(id: string, name: string, results: string[]): void {
+    this.sfxManager.addSFXTrigger(id, name, results);
+  }
+
+  addSFXMode(sfxClass: IDiceSFXClass): void {
+    this.sfxManager.registerSFXModeClass(sfxClass);
+  }
+
+  getSFXModes(): Record<string, string> {
+    return this.sfxManager.getSFXModes(true);
   }
 
   onCollision(listener: (event: CollisionEvent) => void): () => void {
@@ -798,7 +822,9 @@ export class DiceBox {
     this.processingQueue = false;
     this.playback = null;
     this.rolling = false;
+    this.pendingHideAfterSfx = false;
     this.activeResolveBatch = [];
+    this.sfxManager.clearQueue();
 
     for (const die of this.activeDice) {
       this.scene.remove(die.group);
@@ -897,6 +923,8 @@ export class DiceBox {
 
     this.cancelAutoHide();
     this.clearActiveDiceFromScene();
+    this.pendingHideAfterSfx = false;
+    this.sfxManager.clearQueue();
 
     const totalDice = mergedThrows.reduce((count, throwGroup) => count + throwGroup.dice.length, 0);
     const effectiveThrows = this.limitThrowsByMaxDice(mergedThrows, Math.max(1, this.maxDiceNumber));
@@ -1236,6 +1264,7 @@ export class DiceBox {
     this.outlineObjects.length = 0;
     this.playback = null;
     this.rolling = false;
+    this.pendingHideAfterSfx = false;
   }
 
   private findActiveDieFromObject(object: Object3D): ActiveDie | null {
@@ -1257,22 +1286,23 @@ export class DiceBox {
   private handleFrame = (context: RenderFrameContext): void => {
     if (this.playback) {
       this.applyPlaybackFrame(context);
-      return;
+    } else if (this.allowInteractivity && this.physicsClient) {
+      if (this.interactionDragging || !this.interactionRealtimePending) {
+        this.interactionRealtimePending = true;
+        void this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
+          .then((result) => {
+            this.applyRealtimeStep(result);
+          })
+          .finally(() => {
+            this.interactionRealtimePending = false;
+          });
+      }
     }
 
-    if (!this.allowInteractivity || !this.physicsClient) {
-      return;
-    }
+    this.sfxManager.renderSFX(context.deltaSeconds);
 
-    if (this.interactionDragging || !this.interactionRealtimePending) {
-      this.interactionRealtimePending = true;
-      void this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
-        .then((result) => {
-          this.applyRealtimeStep(result);
-        })
-        .finally(() => {
-          this.interactionRealtimePending = false;
-        });
+    if (!this.rolling && !this.playback && this.pendingHideAfterSfx && !this.sfxManager.hasActiveEffects()) {
+      this.handleSfxQueueDrained();
     }
   };
 
@@ -1361,15 +1391,21 @@ export class DiceBox {
     this.playback = null;
     this.rolling = false;
 
+    const startedSfx = this.triggerSpecialEffectsForSettledDice();
+
     for (const resolve of this.activeResolveBatch) {
       resolve(true);
     }
     this.activeResolveBatch = [];
 
     if (this.hideAfterRoll) {
-      this.scheduleAutoHide();
-      this.stopAnimating();
-    } else if (!this.allowInteractivity) {
+      if (startedSfx || this.sfxManager.hasActiveEffects()) {
+        this.pendingHideAfterSfx = true;
+      } else {
+        this.scheduleAutoHide();
+        this.stopAnimating();
+      }
+    } else if (!this.allowInteractivity && !this.sfxManager.hasActiveEffects()) {
       this.stopAnimating();
     }
   }
@@ -1416,6 +1452,56 @@ export class DiceBox {
 
     for (const listener of this.collisionListeners) {
       listener(event);
+    }
+  }
+
+  private createSfxMeshRef(die: ActiveDie): DiceMeshRef {
+    const meshRef = die.group as unknown as DiceMeshRef;
+    meshRef.shape = die.shape;
+    meshRef.options = {
+      ...die.die.options,
+      secretRoll: die.die.options.secret === true,
+    };
+    return meshRef;
+  }
+
+  private triggerSpecialEffectsForSettledDice(): boolean {
+    let started = false;
+
+    for (const die of this.activeDice) {
+      const specialEffects = die.die.specialEffects;
+      if (!Array.isArray(specialEffects) || specialEffects.length === 0) {
+        continue;
+      }
+
+      const meshRef = this.createSfxMeshRef(die);
+      for (const effect of specialEffects) {
+        started = true;
+        void this.sfxManager.playSFX(effect, this, meshRef).catch((error) => {
+          console.warn('DiceBox SFX playback failed:', error);
+        });
+      }
+    }
+
+    return started;
+  }
+
+  private handleSfxQueueDrained(): void {
+    if (this.rolling || this.playback || this.sfxManager.hasActiveEffects()) {
+      return;
+    }
+
+    if (this.pendingHideAfterSfx) {
+      this.pendingHideAfterSfx = false;
+      if (this.hideAfterRoll) {
+        this.scheduleAutoHide();
+        this.stopAnimating();
+        return;
+      }
+    }
+
+    if (!this.allowInteractivity) {
+      this.stopAnimating();
     }
   }
 
@@ -2151,6 +2237,7 @@ export class DiceBox {
     this.runtimeReady = false;
     this.bodyCollisionAudio.clear();
     this.soundManager.dispose();
+    this.sfxManager.dispose();
 
     this.progressListeners.clear();
     this.reportAssetLoad('idle', 0, 0);

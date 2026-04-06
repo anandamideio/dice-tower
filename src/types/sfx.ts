@@ -46,6 +46,8 @@ export interface SFXPlaybackOptions {
   isGlobal: boolean;
   /** Whether to suppress the sound component. */
   muteSound: boolean;
+  /** Effect-specific options passed through from SFX config lines. */
+  [key: string]: unknown;
 }
 
 /** An SFX event emitted during the roll lifecycle. */

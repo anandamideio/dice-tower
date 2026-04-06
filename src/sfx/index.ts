@@ -1,0 +1,20 @@
+export { DiceSFXManager, type DiceSFXManagerOptions } from './dice-sfx-manager.js';
+export {
+  BUILTIN_SFX_MODE_CLASSES,
+  PlayAnimationBright,
+  PlayAnimationDark,
+  PlayAnimationOutline,
+  PlayAnimationImpact,
+  PlayAnimationThrow,
+  PlayAnimationThormund,
+  PlayAnimationParticleSparkles,
+  PlayAnimationParticleSpiral,
+  PlayAnimationParticleVortex,
+  PlayConfettiStrength1,
+  PlayConfettiStrength2,
+  PlayConfettiStrength3,
+  PlaySoundEpicWin,
+  PlaySoundEpicFail,
+  PlayMacro,
+  type BuiltinSFXClassId,
+} from './builtin-sfx.js';

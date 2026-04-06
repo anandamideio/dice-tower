@@ -8,3 +8,103 @@
   z-index: var(--dice-tower-z-index);
   pointer-events: none;
 }
+
+.dice-tower-config,
+.dice-tower-rollable-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.dice-tower-config__toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.dice-tower-config__preview-label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.dice-tower-config__panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.dice-tower-config__panel h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.dice-tower-config__grid,
+.dice-tower-rollable-area__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem 0.75rem;
+}
+
+.dice-tower-config__grid label,
+.dice-tower-rollable-area__grid label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.dice-tower-config__table {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.dice-tower-config__row {
+  display: grid;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.dice-tower-config__table--appearance .dice-tower-config__row {
+  grid-template-columns: 60px 70px 1fr 1fr 1fr 1fr;
+}
+
+.dice-tower-config__table--sfx .dice-tower-config__row {
+  grid-template-columns: 120px 1fr 1fr 80px;
+}
+
+.dice-tower-config__row--header {
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.dice-tower-config__row > span {
+  min-width: 0;
+}
+
+.dice-tower-config__row input,
+.dice-tower-config__row select,
+.dice-tower-config__toolbar input,
+.dice-tower-config__toolbar button,
+.dice-tower-rollable-area__grid input,
+.dice-tower-rollable-area__actions button {
+  width: 100%;
+}
+
+.dice-tower-config__hint {
+  margin: 0;
+  opacity: 0.8;
+  font-size: 0.85rem;
+}
+
+.dice-tower-rollable-area__panel {
+  display: flex;
+  align-items: center;
+}
+
+.dice-tower-rollable-area__actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+}

@@ -1,7 +1,8 @@
 import { mergeQueuedRollCommands, parseRollToNotation, DiceFactory } from '../dice/index.js';
 import { DiceBox, type DiceBoxConfig } from '../rendering/index.js';
 import type { Colorset, TextureDefinition } from '../types/appearance.js';
-import type { DicePresetData } from '../types/dice.js';
+import type { DiceNotationData, DicePresetData } from '../types/dice.js';
+import type { RollableArea } from '../types/rendering.js';
 import type { ClientSettings, WorldSettings } from '../types/settings.js';
 import {
   emitDiceRollComplete,
@@ -21,6 +22,40 @@ import { MODULE_ID } from '../config/constants.js';
 import type { IDice3D, IDiceBox, IDiceFactory, IDiceSFXClass, IDiceSystem } from './dice3d.js';
 
 const OVERLAY_ID = `${MODULE_ID}-overlay`;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resolveDimensionsFromRollingArea(
+  rollingArea: RollableArea | false,
+): DiceBoxConfig['dimensions'] | undefined {
+  if (!rollingArea) {
+    return undefined;
+  }
+
+  const viewportWidth = Math.max(1, Math.floor(window.innerWidth || 1));
+  const viewportHeight = Math.max(1, Math.floor(window.innerHeight || 1));
+
+  const left = clamp(Math.floor(rollingArea.left), 0, viewportWidth - 1);
+  const top = clamp(Math.floor(rollingArea.top), 0, viewportHeight - 1);
+  const width = clamp(Math.floor(rollingArea.width), 1, viewportWidth - left);
+  const height = clamp(Math.floor(rollingArea.height), 1, viewportHeight - top);
+
+  const right = Math.max(0, viewportWidth - left - width);
+  const bottom = Math.max(0, viewportHeight - top - height);
+
+  return {
+    width: viewportWidth,
+    height: viewportHeight,
+    margin: {
+      top,
+      left,
+      right,
+      bottom,
+    },
+  };
+}
 
 function ensureOverlayHost(): HTMLElement {
   const existing = document.getElementById(OVERLAY_ID);
@@ -94,6 +129,7 @@ export class Dice3DRuntime implements IDice3D {
       antialiasing: clientSettings.antialiasing,
       useHighDPI: clientSettings.useHighDPI,
       timeBeforeHide: clientSettings.timeBeforeHide,
+      dimensions: resolveDimensionsFromRollingArea(clientSettings.rollingArea),
     };
 
     const box = await DiceBox.create(host, boxConfig);
@@ -162,49 +198,25 @@ export class Dice3DRuntime implements IDice3D {
       return false;
     }
 
-    const notation = parseRollToNotation(roll, {
-      maxDiceNumber: this.worldSettings.maxDiceNumber,
-      enableFlavorColorset: this.clientSettings.enableFlavorColorset,
-      user: rollUser,
-      appearance: getUserAppearanceFlags(rollUser),
-      specialEffects: getMergedSfxListForUser(rollUser),
+    const notation = this.buildNotationForRoll(roll, rollUser, {
+      secretRoll,
+      forceGhost: options?.ghost === true || shouldGhost,
     });
 
-    if (notation.throws.every((throwGroup) => throwGroup.dice.length === 0)) {
+    if (!notation) {
       return false;
-    }
-
-    for (const throwGroup of notation.throws) {
-      for (const die of throwGroup.dice) {
-        if (options?.ghost === true || shouldGhost) {
-          die.options.ghost = true;
-          delete die.options.secret;
-        } else if (secretRoll) {
-          die.options.secret = true;
-        }
-      }
     }
 
     const resolvedMessageId = messageID ?? `dice-tower-${Date.now().toString(36)}`;
-    const allowed = emitDiceRollStart(resolvedMessageId, {
-      roll,
-      user: rollUser,
-      blind: secretRoll,
-    });
-
-    if (!allowed) {
-      return false;
-    }
-
-    this.refreshCanInteract();
-    const rendered = await this.boxRuntime.add(notation);
-    this.refreshCanInteract();
-
-    if (rendered) {
-      emitDiceRollComplete(resolvedMessageId);
-    }
-
-    return rendered;
+    return this.playNotation(
+      notation,
+      resolvedMessageId,
+      {
+        roll,
+        user: rollUser,
+        blind: secretRoll,
+      },
+    );
   }
 
   renderRolls(chatMessage: ChatMessage, rolls: Roll[]): void {
@@ -216,20 +228,51 @@ export class Dice3DRuntime implements IDice3D {
       return;
     }
 
+    await this.refreshSettings();
+
     chatMessage._dice3danimating = true;
 
+    const rollUser = chatMessage.user ?? game.user;
+    const secretRoll = chatMessage.blind === true;
+    const messageId = chatMessage.id ?? `dice-tower-${Date.now().toString(36)}`;
+
     try {
+      if (this.worldSettings.enabledSimultaneousRollForMessage) {
+        const queue = rolls
+          .map((roll) => {
+            const notation = this.buildNotationForRoll(roll, rollUser, {
+              secretRoll,
+              forceGhost: false,
+            });
+
+            return notation ? { notation } : null;
+          })
+          .filter((entry): entry is { notation: DiceNotationData } => entry !== null);
+
+        if (queue.length === 0) {
+          return;
+        }
+
+        const merged = mergeQueuedRollCommands(queue);
+        await this.playNotation(merged, messageId, {
+          roll: rolls[0],
+          user: rollUser,
+          blind: secretRoll,
+        });
+        return;
+      }
+
       for (const roll of rolls) {
         await this.showForRoll(
           roll,
-          chatMessage.user,
+          rollUser,
           false,
           chatMessage.whisper,
           chatMessage.blind,
-          chatMessage.id,
+          messageId,
           { ...chatMessage.speaker },
           {
-            secret: chatMessage.blind,
+            secret: secretRoll,
           },
         );
       }
@@ -237,6 +280,58 @@ export class Dice3DRuntime implements IDice3D {
       chatMessage._dice3danimating = false;
       this.refreshCanInteract();
     }
+  }
+
+  private buildNotationForRoll(
+    roll: Roll,
+    rollUser: User,
+    options: { secretRoll: boolean; forceGhost: boolean },
+  ): DiceNotationData | null {
+    const notation = parseRollToNotation(roll, {
+      maxDiceNumber: this.worldSettings.maxDiceNumber,
+      enableFlavorColorset: this.clientSettings.enableFlavorColorset,
+      user: rollUser,
+      appearance: getUserAppearanceFlags(rollUser),
+      specialEffects: getMergedSfxListForUser(rollUser),
+    });
+
+    if (notation.throws.every((throwGroup) => throwGroup.dice.length === 0)) {
+      return null;
+    }
+
+    for (const throwGroup of notation.throws) {
+      for (const die of throwGroup.dice) {
+        if (options.forceGhost) {
+          die.options.ghost = true;
+          delete die.options.secret;
+        } else if (options.secretRoll) {
+          die.options.secret = true;
+        }
+      }
+    }
+
+    return notation;
+  }
+
+  private async playNotation(
+    notation: DiceNotationData,
+    messageId: string,
+    context: { roll: Roll; user: User; blind: boolean },
+  ): Promise<boolean> {
+    const allowed = emitDiceRollStart(messageId, context);
+    if (!allowed) {
+      return false;
+    }
+
+    this.refreshCanInteract();
+    const rendered = await this.boxRuntime.add(notation);
+    this.refreshCanInteract();
+
+    if (rendered) {
+      emitDiceRollComplete(messageId);
+    }
+
+    return rendered;
   }
 
   addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string): void {
@@ -303,6 +398,10 @@ export class Dice3DRuntime implements IDice3D {
     this.hostElement.remove();
   }
 
+  async refreshFromSettings(): Promise<void> {
+    await this.refreshSettings();
+  }
+
   private async refreshSettings(): Promise<void> {
     this.clientSettings = getClientSettingsSnapshot();
     this.worldSettings = getWorldSettingsSnapshot();
@@ -319,6 +418,7 @@ export class Dice3DRuntime implements IDice3D {
       antialiasing: this.clientSettings.antialiasing,
       useHighDPI: this.clientSettings.useHighDPI,
       timeBeforeHide: this.clientSettings.timeBeforeHide,
+      dimensions: resolveDimensionsFromRollingArea(this.clientSettings.rollingArea),
     });
 
     await this.applyRuntimeSettings();

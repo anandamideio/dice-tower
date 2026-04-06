@@ -71,10 +71,12 @@ import type {
   ThrowParams,
   Vec3,
 } from '../types/physics.js';
+import type { SoundsSurface } from '../types/settings.js';
 import { mergeQueuedRollCommands } from '../dice/dice-notation.js';
 import { PhysicsWorkerClient } from '../physics/physics-worker-client.js';
 import { DICE_SHAPE_DEFINITIONS, getFaceIndices } from '../physics/dice-shape-definitions.js';
 import type { IDiceFactory } from '../api/dice3d.js';
+import { SoundManager, type CollisionDieMetadata } from '../audio/sound-manager.js';
 
 // ─── Configuration passed to DiceBox ─────────────────────────────────────────
 
@@ -180,6 +182,9 @@ export interface DiceBoxRuntimeOptions {
   allowInteractivity?: boolean;
   maxDiceNumber?: number;
   queueMergeWindowMs?: number;
+  sounds?: boolean;
+  soundsSurface?: SoundsSurface;
+  soundsVolume?: number;
   muteSoundSecretRolls?: boolean;
 }
 
@@ -536,6 +541,8 @@ export class DiceBox {
   private maxDiceNumber = DEFAULT_MAX_DICE;
   private queueMergeWindowMs = DEFAULT_QUEUE_MERGE_WINDOW_MS;
   private muteSoundSecretRolls = false;
+  private readonly soundManager = new SoundManager();
+  private readonly bodyCollisionAudio = new Map<string, CollisionDieMetadata>();
 
   private commandQueue: DiceThrowCommand[] = [];
   private queueWindowTimer: ReturnType<typeof setTimeout> | null = null;
@@ -658,6 +665,12 @@ export class DiceBox {
     this.maxDiceNumber = Math.max(1, options.maxDiceNumber ?? this.maxDiceNumber);
     this.queueMergeWindowMs = Math.max(0, options.queueMergeWindowMs ?? this.queueMergeWindowMs);
     this.muteSoundSecretRolls = options.muteSoundSecretRolls ?? this.muteSoundSecretRolls;
+    this.soundManager.update({
+      sounds: options.sounds,
+      soundsSurface: options.soundsSurface,
+      volume: options.soundsVolume,
+      muteSoundSecretRolls: this.muteSoundSecretRolls,
+    });
 
     const envMap = (this.renderer as unknown as { envMap?: unknown }).envMap;
     const textureCache = (this.renderer as unknown as {
@@ -942,6 +955,12 @@ export class DiceBox {
         meshUserData.diceBodyId = bodyId;
         meshUserData.throwIndex = throwIndex;
 
+        this.bodyCollisionAudio.set(bodyId, {
+          dieType: die.type,
+          material: typeof meshUserData.material === 'string' ? meshUserData.material : 'plastic',
+          secretRoll: die.options.secret === true,
+        });
+
         bodies.push(body);
         activeDice.push({
           bodyId,
@@ -1213,6 +1232,7 @@ export class DiceBox {
       this.scene.remove(die.group);
     }
     this.activeDice = [];
+    this.bodyCollisionAudio.clear();
     this.outlineObjects.length = 0;
     this.playback = null;
     this.rolling = false;
@@ -1389,6 +1409,11 @@ export class DiceBox {
   }
 
   private emitCollision(event: CollisionEvent): void {
+    this.soundManager.handleCollision(event, {
+      bodyA: this.bodyCollisionAudio.get(event.bodyA),
+      bodyB: event.bodyB ? this.bodyCollisionAudio.get(event.bodyB) : undefined,
+    });
+
     for (const listener of this.collisionListeners) {
       listener(event);
     }
@@ -2124,6 +2149,8 @@ export class DiceBox {
     this.physicsClient = null;
     this.diceFactory = null;
     this.runtimeReady = false;
+    this.bodyCollisionAudio.clear();
+    this.soundManager.dispose();
 
     this.progressListeners.clear();
     this.reportAssetLoad('idle', 0, 0);

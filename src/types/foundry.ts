@@ -148,6 +148,8 @@ declare global {
   interface GameAudio {
     pending: Array<() => void>;
     interface: unknown;
+    muted?: boolean;
+    volume?: number;
     AudioHelper: unknown;
   }
 
@@ -216,7 +218,22 @@ declare global {
     utils: FoundryUtils;
     audio: {
       Sound: new (src: string, options?: Record<string, unknown>) => {
+        src: string;
         load(): Promise<unknown>;
+        play(options?: {
+          loop?: boolean;
+          loopStart?: number;
+          loopEnd?: number;
+          volume?: number;
+        }): unknown;
+      };
+      AudioHelper?: {
+        preloadSound?(src: string): Promise<unknown>;
+        play?(options: {
+          src: string;
+          volume?: number;
+          loop?: boolean;
+        }): Promise<unknown>;
       };
     };
     dice: {

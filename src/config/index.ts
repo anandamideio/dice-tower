@@ -35,4 +35,5 @@ export {
   emitDiceRollComplete,
   emitDiceRollStart,
 } from './hook-bridge.js';
+export { registerDiceTowerChatHooks } from './chat-hooks.js';
 export { DiceConfigMenuApp, RollableAreaConfigMenuApp } from './menu-apps.js';

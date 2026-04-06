@@ -35,7 +35,7 @@ export function emitDiceRollComplete(messageId: string): void {
 
 export function emitDiceMessageProcessed(
   messageId: string,
-  context: { rolls: Roll[]; user: User; blind: boolean },
+  context: { rolls: Roll[]; user: User; blind: boolean; willTrigger3DRoll?: boolean },
 ): void {
   callAllBothHooks(HOOK_NAMES.messageProcessed, messageId, context);
 }

@@ -3,19 +3,19 @@
     <label>
       <input type="hidden" name="area.enabled" value="false" />
       <input type="checkbox" name="area.enabled" value="true" {{#if enabled}}checked{{/if}} />
-      Enable Custom Rolling Area
+      {{localize "DICETOWER.Menu.RollableAreaConfig.Enable"}}
     </label>
   </section>
 
   <section class="dice-tower-rollable-area__grid">
-    <label>Left (px)<input type="number" name="area.left" value="{{area.left}}" min="0" step="1" /></label>
-    <label>Top (px)<input type="number" name="area.top" value="{{area.top}}" min="0" step="1" /></label>
-    <label>Width (px)<input type="number" name="area.width" value="{{area.width}}" min="1" step="1" /></label>
-    <label>Height (px)<input type="number" name="area.height" value="{{area.height}}" min="1" step="1" /></label>
+    <label>{{localize "DICETOWER.Menu.RollableAreaConfig.Left"}}<input type="number" name="area.left" value="{{area.left}}" min="0" step="1" /></label>
+    <label>{{localize "DICETOWER.Menu.RollableAreaConfig.Top"}}<input type="number" name="area.top" value="{{area.top}}" min="0" step="1" /></label>
+    <label>{{localize "DICETOWER.Menu.RollableAreaConfig.Width"}}<input type="number" name="area.width" value="{{area.width}}" min="1" step="1" /></label>
+    <label>{{localize "DICETOWER.Menu.RollableAreaConfig.Height"}}<input type="number" name="area.height" value="{{area.height}}" min="1" step="1" /></label>
   </section>
 
   <section class="dice-tower-rollable-area__actions">
-    <button type="button" data-action="reset">Reset To Full Viewport</button>
-    <button type="submit">Save</button>
+    <button type="button" data-action="reset">{{localize "DICETOWER.Menu.RollableAreaConfig.Reset"}}</button>
+    <button type="submit">{{localize "DICETOWER.Menu.Common.Save"}}</button>
   </section>
 </form>

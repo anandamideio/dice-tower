@@ -19,6 +19,101 @@
       "lang": "en",
       "name": "English",
       "path": "assets/lang/en.json"
+    },
+    {
+      "lang": "de",
+      "name": "German",
+      "path": "assets/lang/de.json"
+    },
+    {
+      "lang": "es",
+      "name": "Spanish",
+      "path": "assets/lang/es.json"
+    },
+    {
+      "lang": "ca",
+      "name": "Catalan",
+      "path": "assets/lang/ca.json"
+    },
+    {
+      "lang": "zh-tw",
+      "name": "Chinese (Traditional)",
+      "path": "assets/lang/zh-tw.json"
+    },
+    {
+      "lang": "ko",
+      "name": "Korean",
+      "path": "assets/lang/ko.json"
+    },
+    {
+      "lang": "pt-BR",
+      "name": "Portuguese (Brazil)",
+      "path": "assets/lang/pt-BR.json"
+    },
+    {
+      "lang": "fr",
+      "name": "French",
+      "path": "assets/lang/fr.json"
+    },
+    {
+      "lang": "it",
+      "name": "Italian",
+      "path": "assets/lang/it.json"
+    },
+    {
+      "lang": "ja",
+      "name": "Japanese",
+      "path": "assets/lang/ja.json"
+    },
+    {
+      "lang": "cs",
+      "name": "Czech",
+      "path": "assets/lang/cs.json"
+    },
+    {
+      "lang": "fi",
+      "name": "Finnish",
+      "path": "assets/lang/fi.json"
+    },
+    {
+      "lang": "sv",
+      "name": "Swedish",
+      "path": "assets/lang/sv.json"
+    },
+    {
+      "lang": "ro",
+      "name": "Romanian",
+      "path": "assets/lang/ro.json"
+    },
+    {
+      "lang": "ru",
+      "name": "Russian",
+      "path": "assets/lang/ru.json"
+    },
+    {
+      "lang": "pl",
+      "name": "Polish",
+      "path": "assets/lang/pl.json"
+    },
+    {
+      "lang": "zh-Hans",
+      "name": "Chinese (Simplified)",
+      "path": "assets/lang/zh_Hans.json"
+    },
+    {
+      "lang": "hu",
+      "name": "Hungarian",
+      "path": "assets/lang/hu.json"
+    },
+    {
+      "lang": "tr",
+      "name": "Turkish",
+      "path": "assets/lang/tr.json"
+    },
+    {
+      "lang": "nl",
+      "name": "Dutch",
+      "path": "assets/lang/nl.json"
     }
   ]
 }

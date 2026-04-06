@@ -50,7 +50,7 @@ export class GeometryRegistry {
   private readonly dracoDecoderPath: string;
 
   constructor(options: GeometryRegistryOptions = {}) {
-    this.dracoDecoderPath = options.dracoDecoderPath ?? 'modules/dice-tower/models/draco/';
+    this.dracoDecoderPath = options.dracoDecoderPath ?? 'modules/dice-tower/assets/models/draco/';
   }
 
   async getGeometry(shape: DieShape, options: GeometryLookupOptions = {}): Promise<DiceGeometryData> {

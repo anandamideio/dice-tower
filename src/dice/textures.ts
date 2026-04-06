@@ -4,7 +4,7 @@ import type {
   TextureDefinition,
 } from '../types/appearance.js';
 
-const MODULE_TEXTURE_ROOT = 'modules/dice-tower/textures';
+const MODULE_TEXTURE_ROOT = 'modules/dice-tower/assets/textures';
 const STANDARD_ATLAS = `${MODULE_TEXTURE_ROOT}/standard.json`;
 
 function inferMaterialFromFrame(frame: string): MaterialType | undefined {

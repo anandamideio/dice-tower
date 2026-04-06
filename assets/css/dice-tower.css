@@ -1,0 +1,10 @@
+:root {
+  --dice-tower-z-index: 100;
+}
+
+#dice-tower-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: var(--dice-tower-z-index);
+  pointer-events: none;
+}

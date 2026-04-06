@@ -7,7 +7,6 @@
 
 import type { Colorset, TextureDefinition } from '../types/appearance.js';
 import type { DicePresetData, SFXLine } from '../types/dice.js';
-import type { SFXTriggerType } from '../types/sfx.js';
 
 /** The DiceFactory manages geometry, materials, presets, and systems. */
 export interface IDiceFactory {

@@ -1,13 +1,31 @@
 /// <reference lib="webworker" />
 
 import type { PhysicsWorkerMessage, PhysicsWorkerResponse } from '../types/physics.js';
-import { PhysicsEngine } from '../physics/physics-engine.js';
 
-const engine = new PhysicsEngine();
+let enginePromise: Promise<import('../physics/physics-engine.js').PhysicsEngine> | null = null;
+
+async function getEngine(): Promise<import('../physics/physics-engine.js').PhysicsEngine> {
+  if (!enginePromise) {
+    enginePromise = import('../physics/physics-engine.js').then(({ PhysicsEngine }) => new PhysicsEngine());
+  }
+
+  return enginePromise;
+}
 
 const workerScope = self as DedicatedWorkerGlobalScope;
 
 async function handleMessage(message: PhysicsWorkerMessage): Promise<void> {
+  if (message.type === 'destroy') {
+    if (enginePromise) {
+      const engine = await enginePromise;
+      engine.destroy();
+    }
+    workerScope.close();
+    return;
+  }
+
+  const engine = await getEngine();
+
   switch (message.type) {
     case 'init': {
       await engine.init(message.config);
@@ -53,12 +71,6 @@ async function handleMessage(message: PhysicsWorkerMessage): Promise<void> {
 
     case 'removeConstraint': {
       engine.removeConstraint();
-      return;
-    }
-
-    case 'destroy': {
-      engine.destroy();
-      workerScope.close();
       return;
     }
 

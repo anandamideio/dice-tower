@@ -5,8 +5,9 @@
  * extensions can work without modification.
  */
 
-import type { Colorset, TextureDefinition } from '../types/appearance.js';
+import type { Colorset, DiceAppearance, TextureDefinition } from '../types/appearance.js';
 import type { DicePresetData, SFXLine } from '../types/dice.js';
+import type { Mesh } from 'three/webgpu';
 
 /** The DiceFactory manages geometry, materials, presets, and systems. */
 export interface IDiceFactory {
@@ -22,6 +23,14 @@ export interface IDiceFactory {
   addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string): void;
   /** Register a dice preset. */
   addDicePreset(dice: DicePresetData, shape?: string | null): void;
+  /** Register a colorset (theme). */
+  addColorset(colorset: Partial<Colorset> & { name: string }, mode?: string): void;
+  /** Register a texture definition. */
+  addTexture(textureID: string, textureData: TextureDefinition): void;
+  /** Resolve appearance for a specific die type. */
+  resolveAppearance(dieType: string, overrides?: Partial<DiceAppearance>): DiceAppearance;
+  /** Build a mesh for a die with fully resolved geometry, labels, and material. */
+  getMesh(dieType: string, overrides?: Partial<DiceAppearance>): Promise<Mesh>;
 }
 
 /** The DiceBox manages the Three.js scene and animation loop. */

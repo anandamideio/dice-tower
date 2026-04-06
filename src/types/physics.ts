@@ -111,6 +111,23 @@ export interface SimulationResult {
   collisions: CollisionEvent[];
 }
 
+/**
+ * Incremental world-step output used during post-roll interactivity.
+ * Positions and rotations are packed by body index.
+ */
+export interface RealtimeStepResult {
+  /** Body IDs in the same order as packed transform arrays. */
+  bodyIds: string[];
+  /** Packed xyz positions by body index. */
+  positions: Float32Array;
+  /** Packed xyzw rotations by body index. */
+  rotations: Float32Array;
+  /** Collision events produced during stepped simulation. */
+  collisions: CollisionEvent[];
+  /** Whether all dynamic bodies are sleeping. */
+  worldAsleep: boolean;
+}
+
 /** Result of physics face-detection for a single die. */
 export interface PhysicsDieResult {
   /** Body ID matching the DiceBodyDef. */
@@ -146,6 +163,7 @@ export type PhysicsWorkerMessage =
   | { type: 'init'; config: PhysicsConfig }
   | { type: 'addDice'; dice: DiceBodyDef[] }
   | { type: 'simulate'; params: ThrowParams }
+  | { type: 'playStep'; deltaSeconds: number }
   | { type: 'addConstraint'; position: Vec3 }
   | { type: 'moveConstraint'; position: Vec3 }
   | { type: 'removeConstraint' }
@@ -153,4 +171,5 @@ export type PhysicsWorkerMessage =
 
 export type PhysicsWorkerResponse =
   | { type: 'ready' }
-  | { type: 'simulated'; result: SimulationResult };
+  | { type: 'simulated'; result: SimulationResult }
+  | { type: 'step'; result: RealtimeStepResult };

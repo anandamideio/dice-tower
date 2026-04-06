@@ -7,6 +7,7 @@ import type {
   DiceBodyDef,
   PhysicsConfig,
   PhysicsDieResult,
+  RealtimeStepResult,
   SimulationFrames,
   SimulationResult,
   ThrowParams,
@@ -224,6 +225,8 @@ export class PhysicsEngine {
 
   private lastCollisionType: CollisionType | null = null;
 
+  private realtimeFrame = 0;
+
   async init(config: PhysicsConfig): Promise<void> {
     if (!this.initialized) {
       await RAPIER.init();
@@ -265,11 +268,13 @@ export class PhysicsEngine {
     this.staticColliderTypes.clear();
     this.lastCollisionFrame = -1000;
     this.lastCollisionType = null;
+    this.realtimeFrame = 0;
   }
 
   addDice(dice: DiceBodyDef[]): void {
     this.ensureReady();
     this.removeAllDiceBodies();
+    this.realtimeFrame = 0;
 
     for (const bodyDef of dice) {
       const spawnStep =
@@ -365,6 +370,7 @@ export class PhysicsEngine {
 
     this.lastCollisionFrame = -1000;
     this.lastCollisionType = null;
+    this.realtimeFrame = 0;
 
     let settleSteps = 0;
     let finalStep = 0;
@@ -390,8 +396,27 @@ export class PhysicsEngine {
     }
 
     const frameCount = finalStep + 1;
-    const usedPositions = positions.slice(0, bodyCount * frameCount * 3);
-    const usedRotations = rotations.slice(0, bodyCount * frameCount * 4);
+    const usedPositions = new Float32Array(bodyCount * frameCount * 3);
+    const usedRotations = new Float32Array(bodyCount * frameCount * 4);
+
+    for (let bodyIndex = 0; bodyIndex < bodyCount; bodyIndex += 1) {
+      for (let frame = 0; frame < frameCount; frame += 1) {
+        const sourcePosOffset = bodyIndex * MAX_SIMULATION_STEPS * 3 + frame * 3;
+        const sourceRotOffset = bodyIndex * MAX_SIMULATION_STEPS * 4 + frame * 4;
+
+        const packedPosOffset = (bodyIndex * frameCount + frame) * 3;
+        const packedRotOffset = (bodyIndex * frameCount + frame) * 4;
+
+        usedPositions[packedPosOffset] = positions[sourcePosOffset];
+        usedPositions[packedPosOffset + 1] = positions[sourcePosOffset + 1];
+        usedPositions[packedPosOffset + 2] = positions[sourcePosOffset + 2];
+
+        usedRotations[packedRotOffset] = rotations[sourceRotOffset];
+        usedRotations[packedRotOffset + 1] = rotations[sourceRotOffset + 1];
+        usedRotations[packedRotOffset + 2] = rotations[sourceRotOffset + 2];
+        usedRotations[packedRotOffset + 3] = rotations[sourceRotOffset + 3];
+      }
+    }
 
     const frames: SimulationFrames = {
       frameCount,
@@ -407,8 +432,73 @@ export class PhysicsEngine {
     };
   }
 
+  playStep(deltaSeconds: number): RealtimeStepResult {
+    this.ensureReady();
+
+    const safeDelta = Number.isFinite(deltaSeconds) && deltaSeconds > 0
+      ? deltaSeconds
+      : FIXED_TIMESTEP;
+    const stepCount = Math.max(1, Math.min(30, Math.floor(safeDelta / FIXED_TIMESTEP)));
+
+    const collisions: CollisionEvent[] = [];
+
+    for (let i = 0; i < stepCount; i += 1) {
+      this.realtimeFrame += 1;
+      this.world!.step(this.eventQueue!);
+      this.collectCollisionEvents(this.realtimeFrame, collisions);
+    }
+
+    const bodyIds = Array.from(this.diceBodies.keys());
+    const positions = new Float32Array(bodyIds.length * 3);
+    const rotations = new Float32Array(bodyIds.length * 4);
+
+    let worldAsleep = bodyIds.length > 0;
+
+    for (let i = 0; i < bodyIds.length; i += 1) {
+      const state = this.diceBodies.get(bodyIds[i]);
+      if (!state) {
+        continue;
+      }
+
+      const position = state.body.translation();
+      const rotation = state.body.rotation();
+
+      const posOffset = i * 3;
+      const rotOffset = i * 4;
+
+      positions[posOffset] = position.x;
+      positions[posOffset + 1] = position.y;
+      positions[posOffset + 2] = position.z;
+
+      rotations[rotOffset] = rotation.x;
+      rotations[rotOffset + 1] = rotation.y;
+      rotations[rotOffset + 2] = rotation.z;
+      rotations[rotOffset + 3] = rotation.w;
+
+      if (!state.body.isSleeping()) {
+        worldAsleep = false;
+      }
+    }
+
+    if (bodyIds.length === 0) {
+      worldAsleep = true;
+    }
+
+    return {
+      bodyIds,
+      positions,
+      rotations,
+      collisions,
+      worldAsleep,
+    };
+  }
+
   getTransferables(result: SimulationResult): Transferable[] {
     return [result.frames.positions.buffer, result.frames.rotations.buffer];
+  }
+
+  getStepTransferables(result: RealtimeStepResult): Transferable[] {
+    return [result.positions.buffer, result.rotations.buffer];
   }
 
   private ensureReady(): void {

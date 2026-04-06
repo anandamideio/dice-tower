@@ -313,6 +313,8 @@ export class DiceFactory implements IDiceFactory {
       texture: resolvedAppearance.texture,
       material: resolvedAppearance.resolvedMaterialType,
       faceValues: geometryData.faceValues,
+      mass: preset.mass ?? 300,
+      inertia: preset.inertia ?? 13,
     };
 
     return mesh;

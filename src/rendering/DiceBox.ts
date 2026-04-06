@@ -20,6 +20,7 @@ import {
   Color,
   CubeTextureLoader,
   DirectionalLight,
+  Group,
   HalfFloatType,
   HemisphereLight,
   LoadingManager,
@@ -37,6 +38,8 @@ import {
   ShadowMaterial,
   SRGBColorSpace,
   TextureLoader,
+  Quaternion,
+  Vector2,
   Vector3,
   WebGPURenderer,
 } from 'three/webgpu';
@@ -50,7 +53,28 @@ import type {
   DisplayMetrics,
   QualitySettings,
   RendererBackend,
+  ThrowingForce,
 } from '../types/rendering.js';
+import type { DiceAppearance } from '../types/appearance.js';
+import type {
+  DiceNotationData,
+  DiceThrow,
+  DieResult,
+  DieShape,
+} from '../types/dice.js';
+import type {
+  CollisionEvent,
+  DiceBodyDef,
+  PhysicsConfig,
+  SimulationFrames,
+  SimulationResult,
+  ThrowParams,
+  Vec3,
+} from '../types/physics.js';
+import { mergeQueuedRollCommands } from '../dice/dice-notation.js';
+import { PhysicsWorkerClient } from '../physics/physics-worker-client.js';
+import { DICE_SHAPE_DEFINITIONS, getFaceIndices } from '../physics/dice-shape-definitions.js';
+import type { IDiceFactory } from '../api/dice3d.js';
 
 // ─── Configuration passed to DiceBox ─────────────────────────────────────────
 
@@ -135,6 +159,264 @@ const DEFAULT_DESK_SURFACE: DeskSurfaceConfig = {
   shadowOpacity: 0.5,
   shadowColor: 0x000000,
 };
+
+const ROLL_GROUP_STEP = 15;
+const FORCE_MODIFIERS: Record<ThrowingForce, number> = {
+  weak: 0.5,
+  medium: 0.8,
+  strong: 1.8,
+};
+const DEFAULT_SPEED_MULTIPLIER = 1;
+const DEFAULT_MAX_DICE = 100;
+const DEFAULT_QUEUE_MERGE_WINDOW_MS = 80;
+const FACE_SWAP_BLEND_FRAMES = 10;
+
+export interface DiceBoxRuntimeOptions {
+  diceFactory: IDiceFactory;
+  physics?: PhysicsWorkerClient;
+  throwingForce?: ThrowingForce;
+  speed?: number;
+  hideAfterRoll?: boolean;
+  allowInteractivity?: boolean;
+  maxDiceNumber?: number;
+  queueMergeWindowMs?: number;
+  muteSoundSecretRolls?: boolean;
+}
+
+interface DiceThrowCommand {
+  notation: DiceNotationData;
+  resolve: (value: boolean) => void;
+  reject: (reason?: unknown) => void;
+}
+
+interface ActiveDie {
+  bodyId: string;
+  throwIndex: number;
+  die: DieResult;
+  shape: DieShape;
+  startAtIteration: number;
+  group: Group;
+  mesh: Mesh;
+  simulatedResult: number;
+  finalQuaternion: Quaternion;
+  correctedQuaternion: Quaternion | null;
+}
+
+interface PlaybackState {
+  frames: SimulationFrames;
+  lastFrame: number;
+  elapsedSeconds: number;
+  lastAppliedFrame: number;
+  collisionsByFrame: Map<number, CollisionEvent[]>;
+  bodyIndexById: Map<string, number>;
+}
+
+interface ThrowVectorBasis {
+  x: number;
+  y: number;
+  dist: number;
+  boost: number;
+}
+
+interface DiceFactoryRuntime {
+  getMesh(dieType: DieResult['type'], overrides?: Partial<DiceAppearance>): Promise<Mesh>;
+  setEnvironmentMaps?: (envMap: unknown, roughnessMaps: Record<string, unknown>) => void;
+  setMaterialQuality?: (quality: 'low' | 'high') => void;
+}
+
+interface PhysicsRuntimeClient {
+  init(config: PhysicsConfig): Promise<void>;
+  simulate(params: ThrowParams): Promise<SimulationResult>;
+  playStep(deltaSeconds: number): Promise<RealtimeStepPayload>;
+  addDice(dice: DiceBodyDef[]): void;
+  addConstraint(position: Vec3): void;
+  moveConstraint(position: Vec3): void;
+  removeConstraint(): void;
+  destroy(): void;
+}
+
+interface RealtimeStepPayload {
+  bodyIds: string[];
+  positions: Float32Array;
+  rotations: Float32Array;
+  collisions: CollisionEvent[];
+  worldAsleep: boolean;
+}
+
+class Mulberry32 {
+  private state: number;
+
+  constructor(seed: number) {
+    this.state = seed >>> 0;
+  }
+
+  next(): number {
+    this.state += 0x6d2b79f5;
+    let t = this.state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  range(min: number, max: number): number {
+    return min + (max - min) * this.next();
+  }
+}
+
+function packPhysicsMargin(display: DisplayMetrics): PhysicsConfig['margin'] {
+  const margin = display.containerMargin;
+  if (!margin) {
+    return 0;
+  }
+
+  return {
+    top: margin.top,
+    bottom: margin.bottom,
+    left: margin.left,
+    right: margin.right,
+  };
+}
+
+function randomQuaternion(rng: Mulberry32): Quaternion {
+  const u1 = rng.next();
+  const u2 = rng.next();
+  const u3 = rng.next();
+
+  const sq1 = Math.sqrt(1 - u1);
+  const sq2 = Math.sqrt(u1);
+
+  const x = sq1 * Math.sin(2 * Math.PI * u2);
+  const y = sq1 * Math.cos(2 * Math.PI * u2);
+  const z = sq2 * Math.sin(2 * Math.PI * u3);
+  const w = sq2 * Math.cos(2 * Math.PI * u3);
+
+  return new Quaternion(x, y, z, w).normalize();
+}
+
+function shapeForDieType(dieType: DieResult['type'], fallback: DieShape): DieShape {
+  if (dieType === 'd100') {
+    return 'd10';
+  }
+
+  return fallback;
+}
+
+function resolveDesiredFaceValue(die: DieResult): number {
+  if (die.type === 'd100') {
+    if (typeof die.d100Result === 'number') {
+      const tens = Math.floor(die.d100Result / 10);
+      return tens === 10 ? 0 : tens * 10;
+    }
+
+    return die.result * 10;
+  }
+
+  return die.result;
+}
+
+function valueForFaceSwap(shape: DieShape, value: number): number {
+  if (shape === 'd10' && value === 0) {
+    return 10;
+  }
+  return value;
+}
+
+function getFaceNormalByValue(shape: DieShape, value: number): Vector3 | null {
+  if (shape === 'd2') {
+    if (value === 1) return new Vector3(0, -1, 0);
+    if (value === 2) return new Vector3(0, 1, 0);
+    return null;
+  }
+
+  const definition = DICE_SHAPE_DEFINITIONS[shape];
+  if (definition.type !== 'ConvexPolyhedron') {
+    return null;
+  }
+
+  for (let faceIndex = 0; faceIndex < definition.faces.length; faceIndex += 1) {
+    const faceValue = definition.faceValues[faceIndex] ?? 0;
+    if (faceValue !== value) {
+      continue;
+    }
+
+    const indices = getFaceIndices(definition.faces[faceIndex], definition.skipLastFaceIndex);
+    if (indices.length < 3) {
+      continue;
+    }
+
+    const a = definition.vertices[indices[0]];
+    const b = definition.vertices[indices[1]];
+    const c = definition.vertices[indices[2]];
+
+    const va = new Vector3(a[0], a[1], a[2]);
+    const vb = new Vector3(b[0], b[1], b[2]);
+    const vc = new Vector3(c[0], c[1], c[2]);
+
+    const normal = new Vector3()
+      .subVectors(vb, va)
+      .cross(new Vector3().subVectors(vc, va))
+      .normalize();
+
+    return normal;
+  }
+
+  return null;
+}
+
+function interpolateBodyPosition(
+  frames: SimulationFrames,
+  bodyIndex: number,
+  frameA: number,
+  frameB: number,
+  alpha: number,
+  out: Vector3,
+): void {
+  const frameCount = frames.frameCount;
+  const baseA = (bodyIndex * frameCount + frameA) * 3;
+  const baseB = (bodyIndex * frameCount + frameB) * 3;
+
+  const ax = frames.positions[baseA];
+  const ay = frames.positions[baseA + 1];
+  const az = frames.positions[baseA + 2];
+  const bx = frames.positions[baseB];
+  const by = frames.positions[baseB + 1];
+  const bz = frames.positions[baseB + 2];
+
+  out.set(
+    ax + (bx - ax) * alpha,
+    ay + (by - ay) * alpha,
+    az + (bz - az) * alpha,
+  );
+}
+
+function interpolateBodyRotation(
+  frames: SimulationFrames,
+  bodyIndex: number,
+  frameA: number,
+  frameB: number,
+  alpha: number,
+  out: Quaternion,
+): void {
+  const frameCount = frames.frameCount;
+  const baseA = (bodyIndex * frameCount + frameA) * 4;
+  const baseB = (bodyIndex * frameCount + frameB) * 4;
+
+  const qa = new Quaternion(
+    frames.rotations[baseA],
+    frames.rotations[baseA + 1],
+    frames.rotations[baseA + 2],
+    frames.rotations[baseA + 3],
+  );
+
+  const qb = new Quaternion(
+    frames.rotations[baseB],
+    frames.rotations[baseB + 1],
+    frames.rotations[baseB + 2],
+    frames.rotations[baseB + 3],
+  );
+
+  out.copy(qa).slerp(qb, alpha);
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -241,6 +523,38 @@ export class DiceBox {
   private realisticLighting = false;
   private anisotropy = 1;
 
+  // Stage 5 runtime integration
+  private diceFactory: DiceFactoryRuntime | null = null;
+  private physicsClient: PhysicsRuntimeClient | null = null;
+  private ownsPhysicsClient = false;
+  private runtimeReady = false;
+
+  private throwingForce: ThrowingForce = 'medium';
+  private speedMultiplier = DEFAULT_SPEED_MULTIPLIER;
+  private hideAfterRoll = true;
+  private allowInteractivity = false;
+  private maxDiceNumber = DEFAULT_MAX_DICE;
+  private queueMergeWindowMs = DEFAULT_QUEUE_MERGE_WINDOW_MS;
+  private muteSoundSecretRolls = false;
+
+  private commandQueue: DiceThrowCommand[] = [];
+  private queueWindowTimer: ReturnType<typeof setTimeout> | null = null;
+  private processingQueue = false;
+  private activeResolveBatch: Array<(value: boolean) => void> = [];
+
+  private activeDice: ActiveDie[] = [];
+  private playback: PlaybackState | null = null;
+
+  private interactionPointer = new Vector2();
+  private interactionDragging = false;
+  private interactionDraggedDieId: string | null = null;
+  private interactionRealtimePending = false;
+  private interactionOffset = new Vector3();
+  private reusablePosition = new Vector3();
+  private reusableQuaternion = new Quaternion();
+
+  private collisionListeners = new Set<(event: CollisionEvent) => void>();
+
   private constructor(container: HTMLElement, config: DiceBoxConfig) {
     this.container = container;
     this.config = normalizeDiceBoxConfig(config);
@@ -316,6 +630,767 @@ export class DiceBox {
     // --- Post-processing ---
     if (this.realisticLighting) {
       this.setupPostProcessing();
+    }
+  }
+
+  get running(): boolean {
+    return this.rolling || this.processingQueue;
+  }
+
+  async configureRuntime(options: DiceBoxRuntimeOptions): Promise<void> {
+    this.diceFactory = options.diceFactory as unknown as DiceFactoryRuntime;
+
+    if (options.physics) {
+      if (this.ownsPhysicsClient && this.physicsClient) {
+        this.physicsClient.destroy();
+      }
+      this.physicsClient = options.physics as unknown as PhysicsRuntimeClient;
+      this.ownsPhysicsClient = false;
+    } else if (!this.physicsClient) {
+      this.physicsClient = new PhysicsWorkerClient() as unknown as PhysicsRuntimeClient;
+      this.ownsPhysicsClient = true;
+    }
+
+    this.throwingForce = options.throwingForce ?? this.throwingForce;
+    this.speedMultiplier = clamp(options.speed ?? this.speedMultiplier, 0.5, 3);
+    this.hideAfterRoll = options.hideAfterRoll ?? this.hideAfterRoll;
+    this.allowInteractivity = options.allowInteractivity ?? this.allowInteractivity;
+    this.maxDiceNumber = Math.max(1, options.maxDiceNumber ?? this.maxDiceNumber);
+    this.queueMergeWindowMs = Math.max(0, options.queueMergeWindowMs ?? this.queueMergeWindowMs);
+    this.muteSoundSecretRolls = options.muteSoundSecretRolls ?? this.muteSoundSecretRolls;
+
+    const envMap = (this.renderer as unknown as { envMap?: unknown }).envMap;
+    const textureCache = (this.renderer as unknown as {
+      textureCache?: { roughnessMaps?: Record<string, unknown> };
+    }).textureCache;
+
+    const factory = this.diceFactory;
+
+    factory.setEnvironmentMaps?.(
+      envMap ?? null,
+      (textureCache?.roughnessMaps as Record<string, unknown>) ?? {},
+    );
+    factory.setMaterialQuality?.(this.config.imageQuality === 'low' ? 'low' : 'high');
+
+    await this.ensurePhysicsInitialized();
+    this.runtimeReady = true;
+  }
+
+  setRollSpeed(speed: number): void {
+    if (!Number.isFinite(speed)) {
+      return;
+    }
+    this.speedMultiplier = clamp(speed, 0.5, 3);
+  }
+
+  setThrowingForce(force: ThrowingForce): void {
+    this.throwingForce = force;
+  }
+
+  setInteractivityEnabled(enabled: boolean): void {
+    this.allowInteractivity = enabled;
+  }
+
+  onCollision(listener: (event: CollisionEvent) => void): () => void {
+    this.collisionListeners.add(listener);
+    return () => {
+      this.collisionListeners.delete(listener);
+    };
+  }
+
+  add(notation: DiceNotationData): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      this.commandQueue.push({ notation, resolve, reject });
+      this.scheduleQueueFlush();
+    });
+  }
+
+  onMouseMove(_event: MouseEvent | PointerEvent | null, ndc: { x: number; y: number }): Promise<void> {
+    this.interactionPointer.set(ndc.x, ndc.y);
+
+    if (!this.interactionDragging || !this.physicsClient) {
+      return Promise.resolve();
+    }
+
+    this.raycaster.setFromCamera(this.interactionPointer, this.camera);
+    const intersections = this.raycaster.intersectObject(this.desk, false);
+    if (intersections.length === 0) {
+      return Promise.resolve();
+    }
+
+    const targetPoint = intersections[0].point.sub(this.interactionOffset);
+    this.reusablePosition.copy(targetPoint);
+    this.physicsClient.moveConstraint({
+      x: targetPoint.x,
+      y: targetPoint.y,
+      z: targetPoint.z,
+    });
+    this.interactionRealtimePending = false;
+    return Promise.resolve();
+  }
+
+  onMouseDown(
+    _event: MouseEvent | PointerEvent | null,
+    ndc: { x: number; y: number },
+  ): Promise<boolean> {
+    if (!this.allowInteractivity || this.rolling || !this.physicsClient || this.activeDice.length === 0) {
+      return Promise.resolve(false);
+    }
+
+    this.interactionPointer.set(ndc.x, ndc.y);
+    this.raycaster.setFromCamera(this.interactionPointer, this.camera);
+
+    const intersections = this.raycaster.intersectObjects(this.activeDice.map((die) => die.group), true);
+    if (intersections.length === 0) {
+      return Promise.resolve(false);
+    }
+
+    const hit = intersections[0];
+    const die = this.findActiveDieFromObject(hit.object);
+    if (!die) {
+      return Promise.resolve(false);
+    }
+
+    this.interactionDraggedDieId = die.bodyId;
+    this.interactionDragging = true;
+    this.interactionOffset.copy(hit.point).sub(die.group.position);
+    this.physicsClient.addConstraint({ x: hit.point.x, y: hit.point.y, z: hit.point.z });
+
+    this.outlineObjects.length = 0;
+    this.outlineObjects.push(die.group);
+    this.show();
+    this.startAnimating(this.handleFrame);
+
+    return Promise.resolve(true);
+  }
+
+  onMouseUp(_eventUnused: MouseEvent | PointerEvent | null): Promise<boolean> {
+    void _eventUnused;
+    if (!this.interactionDragging || !this.physicsClient) {
+      return Promise.resolve(false);
+    }
+
+    this.interactionDragging = false;
+    this.interactionDraggedDieId = null;
+    this.physicsClient.removeConstraint();
+    this.outlineObjects.length = 0;
+    this.interactionRealtimePending = false;
+
+    return Promise.resolve(true);
+  }
+
+  clearAllDice(): void {
+    this.cancelQueueFlush();
+    this.commandQueue = [];
+    this.processingQueue = false;
+    this.playback = null;
+    this.rolling = false;
+    this.activeResolveBatch = [];
+
+    for (const die of this.activeDice) {
+      this.scene.remove(die.group);
+    }
+    this.activeDice = [];
+
+    this.outlineObjects.length = 0;
+    this.renderScene();
+
+    if (this.physicsClient) {
+      this.physicsClient.addDice([]);
+    }
+  }
+
+  private scheduleQueueFlush(): void {
+    if (this.queueWindowTimer !== null) {
+      return;
+    }
+
+    this.queueWindowTimer = setTimeout(() => {
+      this.queueWindowTimer = null;
+      void this.flushQueuedCommands();
+    }, this.queueMergeWindowMs);
+  }
+
+  private cancelQueueFlush(): void {
+    if (this.queueWindowTimer === null) {
+      return;
+    }
+
+    clearTimeout(this.queueWindowTimer);
+    this.queueWindowTimer = null;
+  }
+
+  private async flushQueuedCommands(): Promise<void> {
+    if (this.processingQueue || this.commandQueue.length === 0) {
+      return;
+    }
+
+    this.processingQueue = true;
+    const batch = this.commandQueue.splice(0, this.commandQueue.length);
+
+    try {
+      const merged = mergeQueuedRollCommands(batch.map((command) => ({ notation: command.notation })));
+      const result = await this.runThrow(merged);
+      for (const command of batch) {
+        command.resolve(result);
+      }
+    } catch (error) {
+      for (const command of batch) {
+        command.reject(error);
+      }
+    } finally {
+      this.processingQueue = false;
+      if (this.commandQueue.length > 0) {
+        this.scheduleQueueFlush();
+      }
+    }
+  }
+
+  private async ensurePhysicsInitialized(): Promise<void> {
+    if (!this.physicsClient) {
+      throw new Error('Physics runtime is not configured. Call configureRuntime() first.');
+    }
+
+    const config = this.getPhysicsConfig();
+    await this.physicsClient.init(config);
+  }
+
+  private getPhysicsConfig(): PhysicsConfig {
+    return {
+      width: this.display.containerWidth ?? this.display.currentWidth ?? 800,
+      height: this.display.containerHeight ?? this.display.currentHeight ?? 600,
+      margin: packPhysicsMargin(this.display),
+      muteSoundSecretRolls: this.muteSoundSecretRolls,
+    };
+  }
+
+  private async runThrow(notation: DiceNotationData): Promise<boolean> {
+    if (!this.runtimeReady) {
+      throw new Error('DiceBox runtime is not ready. Call configureRuntime() first.');
+    }
+
+    const diceFactory = this.diceFactory;
+    const physicsClient = this.physicsClient;
+    if (!diceFactory || !physicsClient) {
+      throw new Error('DiceBox runtime dependencies are missing.');
+    }
+
+    const mergedThrows = notation.throws.filter((throwGroup) => throwGroup.dice.length > 0);
+    if (mergedThrows.length === 0) {
+      return true;
+    }
+
+    await this.ensurePhysicsInitialized();
+
+    this.cancelAutoHide();
+    this.clearActiveDiceFromScene();
+
+    const totalDice = mergedThrows.reduce((count, throwGroup) => count + throwGroup.dice.length, 0);
+    const effectiveThrows = this.limitThrowsByMaxDice(mergedThrows, Math.max(1, this.maxDiceNumber));
+
+    if (effectiveThrows.length === 0) {
+      return true;
+    }
+
+    if (totalDice > this.maxDiceNumber) {
+      console.warn(
+        `DiceBox received ${totalDice} dice, limiting animation to ${this.maxDiceNumber} based on maxDiceNumber.`,
+      );
+    }
+
+    const seed = (Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    const rng = new Mulberry32(seed);
+
+    const bodies: DiceBodyDef[] = [];
+    const activeDice: ActiveDie[] = [];
+
+    let bodyCounter = 0;
+
+    for (let throwIndex = 0; throwIndex < effectiveThrows.length; throwIndex += 1) {
+      const throwGroup = effectiveThrows[throwIndex];
+      const basis = this.createThrowVectorBasis(rng);
+
+      for (let dieIndex = 0; dieIndex < throwGroup.dice.length; dieIndex += 1) {
+        const die = throwGroup.dice[dieIndex];
+        const appearance = this.resolveAppearanceOverrides(die);
+        const mesh = await diceFactory.getMesh(die.type, appearance);
+        const meshUserData = mesh.userData as Record<string, unknown>;
+
+        const fallbackShape = ((meshUserData.shape as DieShape | undefined) ?? 'd6');
+        const shape = shapeForDieType(die.type, fallbackShape);
+
+        const bodyId = `die-${bodyCounter.toString(36)}-${Math.floor(rng.next() * 1_000_000).toString(36)}`;
+        bodyCounter += 1;
+
+        const body = this.createBodyDefinition({
+          id: bodyId,
+          die,
+          shape,
+          throwIndex,
+          basis,
+          rng,
+          mesh,
+        });
+
+        const group = new Group();
+        group.add(mesh);
+        group.visible = body.startAtIteration === 0;
+        group.position.set(body.position.x, body.position.y, body.position.z);
+        group.quaternion.set(body.rotation.x, body.rotation.y, body.rotation.z, body.rotation.w);
+        this.scene.add(group);
+
+        meshUserData.diceBodyId = bodyId;
+        meshUserData.throwIndex = throwIndex;
+
+        bodies.push(body);
+        activeDice.push({
+          bodyId,
+          throwIndex,
+          die,
+          shape,
+          startAtIteration: body.startAtIteration ?? 0,
+          group,
+          mesh,
+          simulatedResult: 0,
+          finalQuaternion: group.quaternion.clone(),
+          correctedQuaternion: null,
+        });
+      }
+    }
+
+    this.activeDice = activeDice;
+
+    const params: ThrowParams = {
+      seed,
+      bodies,
+      config: this.getPhysicsConfig(),
+    };
+
+    const simulation = await physicsClient.simulate(params);
+    this.setupPlayback(simulation);
+
+    this.show();
+    this.startAnimating(this.handleFrame);
+
+    return new Promise<boolean>((resolve) => {
+      this.activeResolveBatch = [resolve];
+    });
+  }
+
+  private setupPlayback(result: SimulationResult): void {
+    const bodyIndexById = new Map<string, number>();
+    for (let index = 0; index < result.frames.bodyIds.length; index += 1) {
+      bodyIndexById.set(result.frames.bodyIds[index], index);
+    }
+
+    const resultsById = new Map(result.results.map((entry) => [entry.id, entry.value]));
+
+    const lastFrame = Math.max(0, result.frames.frameCount - 1);
+
+    for (const die of this.activeDice) {
+      const bodyIndex = bodyIndexById.get(die.bodyId);
+      if (bodyIndex === undefined) {
+        continue;
+      }
+
+      const base = (bodyIndex * result.frames.frameCount + lastFrame) * 4;
+      die.finalQuaternion.set(
+        result.frames.rotations[base],
+        result.frames.rotations[base + 1],
+        result.frames.rotations[base + 2],
+        result.frames.rotations[base + 3],
+      );
+
+      die.simulatedResult = resultsById.get(die.bodyId) ?? 0;
+      die.correctedQuaternion = this.computeFaceSwapQuaternion(die);
+    }
+
+    const collisionsByFrame = new Map<number, CollisionEvent[]>();
+    for (const event of result.collisions) {
+      const frameEvents = collisionsByFrame.get(event.frame) ?? [];
+      frameEvents.push(event);
+      collisionsByFrame.set(event.frame, frameEvents);
+    }
+
+    this.playback = {
+      frames: result.frames,
+      lastFrame,
+      elapsedSeconds: 0,
+      lastAppliedFrame: -1,
+      collisionsByFrame,
+      bodyIndexById,
+    };
+
+    this.rolling = true;
+  }
+
+  private computeFaceSwapQuaternion(die: ActiveDie): Quaternion | null {
+    const desired = valueForFaceSwap(die.shape, resolveDesiredFaceValue(die.die));
+    const simulated = valueForFaceSwap(die.shape, die.simulatedResult);
+
+    if (desired === simulated || desired <= 0 || simulated <= 0) {
+      return null;
+    }
+
+    const simulatedNormal = getFaceNormalByValue(die.shape, simulated);
+    const desiredNormal = getFaceNormalByValue(die.shape, desired);
+    if (!simulatedNormal || !desiredNormal) {
+      return null;
+    }
+
+    const delta = new Quaternion().setFromUnitVectors(desiredNormal, simulatedNormal).normalize();
+    return die.finalQuaternion.clone().multiply(delta).normalize();
+  }
+
+  private createThrowVectorBasis(rng: Mulberry32): ThrowVectorBasis {
+    const width = this.display.innerWidth ?? this.display.containerWidth ?? 800;
+    const height = this.display.innerHeight ?? this.display.containerHeight ?? 600;
+
+    const x = rng.range(-0.5, 1.5) * width;
+    const y = -rng.range(-0.5, 1.5) * height;
+    const dist = Math.max(1e-5, Math.hypot(x, y));
+    const modifier = FORCE_MODIFIERS[this.throwingForce] ?? FORCE_MODIFIERS.medium;
+    const boost = (rng.range(3, 4) * modifier) * dist;
+
+    return { x, y, dist, boost };
+  }
+
+  private rotateThrowVector(x: number, y: number, rng: Mulberry32): { x: number; y: number } {
+    const angle = rng.range(-Math.PI / 10, Math.PI / 10);
+    const rx = x * Math.cos(angle) - y * Math.sin(angle);
+    const ry = x * Math.sin(angle) + y * Math.cos(angle);
+    return {
+      x: rx === 0 ? 0.01 : rx,
+      y: ry === 0 ? 0.01 : ry,
+    };
+  }
+
+  private createBodyDefinition(args: {
+    id: string;
+    die: DieResult;
+    shape: DieShape;
+    throwIndex: number;
+    basis: ThrowVectorBasis;
+    rng: Mulberry32;
+    mesh: Mesh;
+  }): DiceBodyDef {
+    const width = this.display.innerWidth ?? this.display.containerWidth ?? 800;
+    const height = this.display.innerHeight ?? this.display.containerHeight ?? 600;
+
+    const vec = this.rotateThrowVector(args.basis.x, args.basis.y, args.rng);
+    const nx = vec.x / args.basis.dist;
+    const ny = vec.y / args.basis.dist;
+
+    const position: Vec3 = {
+      x: width * (nx > 0 ? -1 : 1) * 0.9 + Math.floor(args.rng.range(-100, 101)),
+      y: height * (ny > 0 ? -1 : 1) * 0.9 + Math.floor(args.rng.range(-100, 101)),
+      z: args.rng.range(200, 400),
+    };
+
+    const projector = Math.abs(nx / ny);
+    if (projector > 1) {
+      position.y /= projector;
+    } else {
+      position.x *= projector;
+    }
+
+    const vel = this.rotateThrowVector(args.basis.x, args.basis.y, args.rng);
+    const vnx = vel.x / args.basis.dist;
+    const vny = vel.y / args.basis.dist;
+
+    let velocity: Vec3 = {
+      x: vnx * args.basis.boost,
+      y: vny * args.basis.boost,
+      z: -10,
+    };
+
+    let angularVelocity: Vec3 = {
+      x: args.rng.range(-35, 35),
+      y: args.rng.range(-35, 35),
+      z: args.rng.range(-15, 15),
+    };
+
+    if (args.shape === 'd2') {
+      velocity = {
+        x: vnx * args.basis.boost * 0.1,
+        y: vny * args.basis.boost * 0.1,
+        z: 3000,
+      };
+      angularVelocity = {
+        x: args.rng.range(6, 14),
+        y: args.rng.range(0.5, 1.5),
+        z: args.rng.range(-6, 6),
+      };
+    }
+
+    const rotation = randomQuaternion(args.rng);
+
+    const materialType = String(args.mesh.userData.material ?? 'plastic');
+    let mass = Number(args.mesh.userData.mass ?? 300);
+    if (!Number.isFinite(mass) || mass <= 0) {
+      mass = 300;
+    }
+
+    if (materialType === 'metal') mass *= 7;
+    if (materialType === 'wood') mass *= 0.65;
+    if (materialType === 'glass') mass *= 2;
+    if (materialType === 'stone') mass *= 1.5;
+
+    let inertia = Number(args.mesh.userData.inertia ?? 13);
+    if (!Number.isFinite(inertia) || inertia <= 0) {
+      inertia = 13;
+    }
+
+    return {
+      id: args.id,
+      shape: args.shape,
+      type: args.die.type,
+      mass,
+      inertia,
+      position,
+      velocity,
+      angularVelocity,
+      rotation: {
+        x: rotation.x,
+        y: rotation.y,
+        z: rotation.z,
+        w: rotation.w,
+      },
+      startAtIteration: args.throwIndex * ROLL_GROUP_STEP,
+      secretRoll: args.die.options.secret === true,
+    };
+  }
+
+  private resolveAppearanceOverrides(die: DieResult): Partial<DiceAppearance> {
+    const appearance: Partial<DiceAppearance> = {};
+
+    if (typeof die.options.colorset === 'string') {
+      appearance.colorset = die.options.colorset;
+    }
+
+    if (typeof die.options.texture === 'string') {
+      appearance.texture = die.options.texture;
+    }
+
+    if (typeof die.options.material === 'string') {
+      appearance.material = die.options.material as DiceAppearance['material'];
+    }
+
+    if (typeof die.options.system === 'string') {
+      appearance.system = die.options.system;
+    }
+
+    return appearance;
+  }
+
+  private limitThrowsByMaxDice(throws: DiceThrow[], maxDice: number): DiceThrow[] {
+    const output: DiceThrow[] = [];
+    let count = 0;
+
+    for (const throwGroup of throws) {
+      if (count >= maxDice) {
+        break;
+      }
+
+      const dice = throwGroup.dice.slice(0, maxDice - count);
+      if (dice.length === 0) {
+        continue;
+      }
+
+      output.push({
+        dice,
+        dsnConfig: throwGroup.dsnConfig,
+      });
+
+      count += dice.length;
+    }
+
+    return output;
+  }
+
+  private clearActiveDiceFromScene(): void {
+    for (const die of this.activeDice) {
+      this.scene.remove(die.group);
+    }
+    this.activeDice = [];
+    this.outlineObjects.length = 0;
+    this.playback = null;
+    this.rolling = false;
+  }
+
+  private findActiveDieFromObject(object: Object3D): ActiveDie | null {
+    let cursor: Object3D | null = object;
+    while (cursor) {
+      const userData = (cursor as { userData?: unknown }).userData;
+      const id =
+        userData && typeof userData === 'object'
+          ? (userData as Record<string, unknown>).diceBodyId
+          : undefined;
+      if (typeof id === 'string') {
+        return this.activeDice.find((die) => die.bodyId === id) ?? null;
+      }
+      cursor = cursor.parent;
+    }
+    return null;
+  }
+
+  private handleFrame = (context: RenderFrameContext): void => {
+    if (this.playback) {
+      this.applyPlaybackFrame(context);
+      return;
+    }
+
+    if (!this.allowInteractivity || !this.physicsClient) {
+      return;
+    }
+
+    if (this.interactionDragging || !this.interactionRealtimePending) {
+      this.interactionRealtimePending = true;
+      void this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
+        .then((result) => {
+          this.applyRealtimeStep(result);
+        })
+        .finally(() => {
+          this.interactionRealtimePending = false;
+        });
+    }
+  };
+
+  private applyPlaybackFrame(context: RenderFrameContext): void {
+    if (!this.playback) {
+      return;
+    }
+
+    this.playback.elapsedSeconds += context.deltaSeconds * this.speedMultiplier;
+
+    const frameFloat = this.playback.elapsedSeconds / context.fixedStepSeconds;
+    const clampedFrame = Math.min(this.playback.lastFrame, frameFloat);
+    const frameA = Math.floor(clampedFrame);
+    const frameB = Math.min(this.playback.lastFrame, frameA + 1);
+    const alpha = clampedFrame - frameA;
+
+    const bodyIndexById = this.playback.bodyIndexById;
+
+    for (const die of this.activeDice) {
+      const bodyIndex = bodyIndexById.get(die.bodyId);
+      if (bodyIndex === undefined) {
+        continue;
+      }
+
+      if (frameA < die.startAtIteration) {
+        die.group.visible = false;
+        continue;
+      }
+
+      die.group.visible = true;
+
+      interpolateBodyPosition(
+        this.playback.frames,
+        bodyIndex,
+        frameA,
+        frameB,
+        alpha,
+        this.reusablePosition,
+      );
+      interpolateBodyRotation(
+        this.playback.frames,
+        bodyIndex,
+        frameA,
+        frameB,
+        alpha,
+        this.reusableQuaternion,
+      );
+
+      if (die.correctedQuaternion) {
+        const swapStart = Math.max(die.startAtIteration, this.playback.lastFrame - FACE_SWAP_BLEND_FRAMES);
+        if (frameA >= swapStart) {
+          const denom = Math.max(1, this.playback.lastFrame - swapStart);
+          const t = clamp((clampedFrame - swapStart) / denom, 0, 1);
+          this.reusableQuaternion.slerp(die.correctedQuaternion, t);
+        }
+      }
+
+      die.group.position.copy(this.reusablePosition);
+      die.group.quaternion.copy(this.reusableQuaternion);
+    }
+
+    for (let frame = this.playback.lastAppliedFrame + 1; frame <= frameA; frame += 1) {
+      const collisions = this.playback.collisionsByFrame.get(frame);
+      if (!collisions) {
+        continue;
+      }
+      for (const collision of collisions) {
+        this.emitCollision(collision);
+      }
+    }
+
+    this.playback.lastAppliedFrame = Math.max(this.playback.lastAppliedFrame, frameA);
+
+    if (frameA < this.playback.lastFrame) {
+      return;
+    }
+
+    for (const die of this.activeDice) {
+      if (die.correctedQuaternion) {
+        die.group.quaternion.copy(die.correctedQuaternion);
+      } else {
+        die.group.quaternion.copy(die.finalQuaternion);
+      }
+    }
+
+    this.playback = null;
+    this.rolling = false;
+
+    for (const resolve of this.activeResolveBatch) {
+      resolve(true);
+    }
+    this.activeResolveBatch = [];
+
+    if (this.hideAfterRoll) {
+      this.scheduleAutoHide();
+      this.stopAnimating();
+    } else if (!this.allowInteractivity) {
+      this.stopAnimating();
+    }
+  }
+
+  private applyRealtimeStep(result: RealtimeStepPayload): void {
+    const indexById = new Map<string, number>();
+    for (let i = 0; i < result.bodyIds.length; i += 1) {
+      indexById.set(result.bodyIds[i], i);
+    }
+
+    for (const die of this.activeDice) {
+      const index = indexById.get(die.bodyId);
+      if (index === undefined) {
+        continue;
+      }
+
+      const posOffset = index * 3;
+      const rotOffset = index * 4;
+
+      die.group.position.set(
+        result.positions[posOffset],
+        result.positions[posOffset + 1],
+        result.positions[posOffset + 2],
+      );
+
+      die.group.quaternion.set(
+        result.rotations[rotOffset],
+        result.rotations[rotOffset + 1],
+        result.rotations[rotOffset + 2],
+        result.rotations[rotOffset + 3],
+      );
+    }
+
+    for (const collision of result.collisions) {
+      this.emitCollision(collision);
+    }
+  }
+
+  private emitCollision(event: CollisionEvent): void {
+    for (const listener of this.collisionListeners) {
+      listener(event);
     }
   }
 
@@ -682,7 +1757,10 @@ export class DiceBox {
 
     this.updateInnerDimensions();
     this.updateScale(this.config.scale, this.config.autoscale);
-    // Physics worker notification is handled by the caller (DiceBoxController, Stage 5)
+
+    if (this.runtimeReady) {
+      void this.ensurePhysicsInitialized();
+    }
   }
 
   // ─── Post-processing ───────────────────────────────────────────────────────
@@ -880,7 +1958,6 @@ export class DiceBox {
     }
     this.lastFrameTimeMs = null;
     this.fixedStepAccumulator = 0;
-    this.cancelAutoHide();
   }
 
   /**
@@ -907,6 +1984,7 @@ export class DiceBox {
     this.isVisible = false;
     const el = this.renderer.domElement;
     el.style.opacity = '0';
+    this.cancelAutoHide();
     this.stopAnimating();
   }
 
@@ -1005,7 +2083,15 @@ export class DiceBox {
    * (module teardown, config dialog close, etc.).
    */
   dispose(): void {
+    this.cancelAutoHide();
     this.stopAnimating();
+    this.cancelQueueFlush();
+
+    for (const command of this.commandQueue) {
+      command.reject(new Error('DiceBox disposed before queued roll could start.'));
+    }
+    this.commandQueue = [];
+    this.activeResolveBatch = [];
 
     // Dispose post-processing
     this.renderPipeline?.dispose?.();
@@ -1031,6 +2117,13 @@ export class DiceBox {
     // Dispose renderer
     this.renderer.dispose();
     this.renderer.domElement.remove();
+
+    if (this.ownsPhysicsClient && this.physicsClient) {
+      this.physicsClient.destroy();
+    }
+    this.physicsClient = null;
+    this.diceFactory = null;
+    this.runtimeReady = false;
 
     this.progressListeners.clear();
     this.reportAssetLoad('idle', 0, 0);

@@ -1,6 +1,7 @@
 import type {
   DiceBodyDef,
   PhysicsConfig,
+  RealtimeStepResult,
   PhysicsWorkerMessage,
   PhysicsWorkerResponse,
   SimulationResult,
@@ -24,6 +25,10 @@ export class PhysicsWorkerClient {
 
   private pendingSimulate:
     | { resolve: (result: SimulationResult) => void; reject: (reason?: unknown) => void }
+    | null = null;
+
+  private pendingStep:
+    | { resolve: (result: RealtimeStepResult) => void; reject: (reason?: unknown) => void }
     | null = null;
 
   constructor() {
@@ -61,6 +66,17 @@ export class PhysicsWorkerClient {
     return new Promise<SimulationResult>((resolve, reject) => {
       this.pendingSimulate = { resolve, reject };
       this.postMessage({ type: 'simulate', params });
+    });
+  }
+
+  playStep(deltaSeconds: number): Promise<RealtimeStepResult> {
+    if (this.pendingStep) {
+      return Promise.reject(new Error('A real-time physics step is already in progress.'));
+    }
+
+    return new Promise<RealtimeStepResult>((resolve, reject) => {
+      this.pendingStep = { resolve, reject };
+      this.postMessage({ type: 'playStep', deltaSeconds });
     });
   }
 
@@ -120,6 +136,14 @@ export class PhysicsWorkerClient {
         break;
       }
 
+      case 'step': {
+        if (this.pendingStep) {
+          this.pendingStep.resolve(message.result);
+          this.pendingStep = null;
+        }
+        break;
+      }
+
       default: {
         const _exhaustive: never = message;
         throw new Error(`Unhandled worker response: ${String(_exhaustive)}`);
@@ -144,6 +168,11 @@ export class PhysicsWorkerClient {
     if (this.pendingSimulate) {
       this.pendingSimulate.reject(reason);
       this.pendingSimulate = null;
+    }
+
+    if (this.pendingStep) {
+      this.pendingStep.reject(reason);
+      this.pendingStep = null;
     }
   }
 }

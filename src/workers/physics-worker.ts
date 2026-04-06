@@ -31,6 +31,16 @@ async function handleMessage(message: PhysicsWorkerMessage): Promise<void> {
       return;
     }
 
+    case 'playStep': {
+      const result = engine.playStep(message.deltaSeconds);
+      const response: PhysicsWorkerResponse = {
+        type: 'step',
+        result,
+      };
+      workerScope.postMessage(response, engine.getStepTransferables(result));
+      return;
+    }
+
     case 'addConstraint': {
       engine.addConstraint(message.position);
       return;

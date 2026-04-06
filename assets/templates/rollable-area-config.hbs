@@ -1,3 +1,21 @@
-<form class="dice-tower-rollable-area-placeholder">
-  <p>{{message}}</p>
+<form class="dice-tower-rollable-area" autocomplete="off">
+  <section class="dice-tower-rollable-area__panel">
+    <label>
+      <input type="hidden" name="area.enabled" value="false" />
+      <input type="checkbox" name="area.enabled" value="true" {{#if enabled}}checked{{/if}} />
+      Enable Custom Rolling Area
+    </label>
+  </section>
+
+  <section class="dice-tower-rollable-area__grid">
+    <label>Left (px)<input type="number" name="area.left" value="{{area.left}}" min="0" step="1" /></label>
+    <label>Top (px)<input type="number" name="area.top" value="{{area.top}}" min="0" step="1" /></label>
+    <label>Width (px)<input type="number" name="area.width" value="{{area.width}}" min="1" step="1" /></label>
+    <label>Height (px)<input type="number" name="area.height" value="{{area.height}}" min="1" step="1" /></label>
+  </section>
+
+  <section class="dice-tower-rollable-area__actions">
+    <button type="button" data-action="reset">Reset To Full Viewport</button>
+    <button type="submit">Save</button>
+  </section>
 </form>

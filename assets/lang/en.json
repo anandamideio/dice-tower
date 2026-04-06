@@ -1,3 +1,11 @@
 {
-  "DICETOWER.ModuleName": "Dice Tower"
+  "DICETOWER.ModuleName": "Dice Tower",
+  "DICETOWER.Menu.DiceConfig.Name": "Dice Tower Configuration",
+  "DICETOWER.Menu.DiceConfig.Label": "Open Dice Tower Configuration",
+  "DICETOWER.Menu.DiceConfig.Hint": "Configure appearance, behavior, and special effects for Dice Tower.",
+  "DICETOWER.Menu.DiceConfig.Title": "Dice Tower Configuration",
+  "DICETOWER.Menu.RollableAreaConfig.Name": "Rollable Area",
+  "DICETOWER.Menu.RollableAreaConfig.Label": "Configure Rollable Area",
+  "DICETOWER.Menu.RollableAreaConfig.Hint": "Restrict dice rolls to a custom region of the viewport.",
+  "DICETOWER.Menu.RollableAreaConfig.Title": "Rollable Area"
 }

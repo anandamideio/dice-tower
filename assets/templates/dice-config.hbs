@@ -1,3 +1,119 @@
-<form class="dice-tower-config-placeholder">
-  <p>{{message}}</p>
+<form class="dice-tower-config" autocomplete="off">
+  <section class="dice-tower-config__toolbar">
+    <label class="dice-tower-config__preview-label">
+      Preview Formula
+      <input type="text" name="preview.formula" value="{{previewFormula}}" placeholder="1d20" />
+    </label>
+    <button type="button" data-action="preview">Preview Roll</button>
+    <button type="submit">Save</button>
+  </section>
+
+  <section class="dice-tower-config__panel">
+    <h2>Client Settings</h2>
+    <div class="dice-tower-config__grid">
+      <label><input type="hidden" name="settings.client.enabled" value="false" /><input type="checkbox" name="settings.client.enabled" value="true" {{#if clientSettings.enabled}}checked{{/if}} /> Enabled</label>
+      <label><input type="hidden" name="settings.client.showExtraDice" value="false" /><input type="checkbox" name="settings.client.showExtraDice" value="true" {{#if clientSettings.showExtraDice}}checked{{/if}} /> Show Extra Dice</label>
+      <label><input type="hidden" name="settings.client.onlyShowOwnDice" value="false" /><input type="checkbox" name="settings.client.onlyShowOwnDice" value="true" {{#if clientSettings.onlyShowOwnDice}}checked{{/if}} /> Only Show Own Dice</label>
+      <label><input type="hidden" name="settings.client.hideAfterRoll" value="false" /><input type="checkbox" name="settings.client.hideAfterRoll" value="true" {{#if clientSettings.hideAfterRoll}}checked{{/if}} /> Hide After Roll</label>
+      <label>Time Before Hide (ms)<input type="number" name="settings.client.timeBeforeHide" value="{{clientSettings.timeBeforeHide}}" min="0" max="20000" step="100" /></label>
+      <label>Hide FX<select name="settings.client.hideFX">{{selectOptions hideFxOptions selected=clientSettings.hideFX valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label><input type="hidden" name="settings.client.autoscale" value="false" /><input type="checkbox" name="settings.client.autoscale" value="true" {{#if clientSettings.autoscale}}checked{{/if}} /> Autoscale</label>
+      <label>Scale<input type="number" name="settings.client.scale" value="{{clientSettings.scale}}" min="10" max="200" step="1" /></label>
+      <label>Speed<input type="number" name="settings.client.speed" value="{{clientSettings.speed}}" min="0.5" max="3" step="0.1" /></label>
+      <label>Image Quality<select name="settings.client.imageQuality">{{selectOptions imageQualityOptions selected=clientSettings.imageQuality valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>Shadow Quality<select name="settings.client.shadowQuality">{{selectOptions shadowQualityOptions selected=clientSettings.shadowQuality valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label><input type="hidden" name="settings.client.bumpMapping" value="false" /><input type="checkbox" name="settings.client.bumpMapping" value="true" {{#if clientSettings.bumpMapping}}checked{{/if}} /> Bump Mapping</label>
+      <label><input type="hidden" name="settings.client.sounds" value="false" /><input type="checkbox" name="settings.client.sounds" value="true" {{#if clientSettings.sounds}}checked{{/if}} /> Sounds</label>
+      <label>Sound Surface<select name="settings.client.soundsSurface">{{selectOptions soundsSurfaceOptions selected=clientSettings.soundsSurface valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>Sound Volume<input type="number" name="settings.client.soundsVolume" value="{{clientSettings.soundsVolume}}" min="0" max="1" step="0.01" /></label>
+      <label>Canvas Z-Index<select name="settings.client.canvasZIndex">{{selectOptions canvasZIndexOptions selected=clientSettings.canvasZIndex valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>Throwing Force<select name="settings.client.throwingForce">{{selectOptions throwingForceOptions selected=clientSettings.throwingForce valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label><input type="hidden" name="settings.client.useHighDPI" value="false" /><input type="checkbox" name="settings.client.useHighDPI" value="true" {{#if clientSettings.useHighDPI}}checked{{/if}} /> High DPI</label>
+      <label>Antialiasing<select name="settings.client.antialiasing">{{selectOptions antialiasingOptions selected=clientSettings.antialiasing valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label><input type="hidden" name="settings.client.glow" value="false" /><input type="checkbox" name="settings.client.glow" value="true" {{#if clientSettings.glow}}checked{{/if}} /> Glow</label>
+      <label><input type="hidden" name="settings.client.showOthersSFX" value="false" /><input type="checkbox" name="settings.client.showOthersSFX" value="true" {{#if clientSettings.showOthersSFX}}checked{{/if}} /> Show Other Users SFX</label>
+      <label><input type="hidden" name="settings.client.immersiveDarkness" value="false" /><input type="checkbox" name="settings.client.immersiveDarkness" value="true" {{#if clientSettings.immersiveDarkness}}checked{{/if}} /> Immersive Darkness</label>
+      <label><input type="hidden" name="settings.client.muteSoundSecretRolls" value="false" /><input type="checkbox" name="settings.client.muteSoundSecretRolls" value="true" {{#if clientSettings.muteSoundSecretRolls}}checked{{/if}} /> Mute Secret Roll Sounds</label>
+      <label><input type="hidden" name="settings.client.enableFlavorColorset" value="false" /><input type="checkbox" name="settings.client.enableFlavorColorset" value="true" {{#if clientSettings.enableFlavorColorset}}checked{{/if}} /> Enable Flavor Colorset</label>
+    </div>
+  </section>
+
+  {{#if isGM}}
+    <section class="dice-tower-config__panel">
+      <h2>World Settings (GM)</h2>
+      <div class="dice-tower-config__grid">
+        <label>Max Dice Number<input type="number" name="settings.world.maxDiceNumber" value="{{worldSettings.maxDiceNumber}}" min="1" max="1000" step="1" /></label>
+        <label>Global Animation Speed<select name="settings.world.globalAnimationSpeed">{{selectOptions worldSpeedOptions selected=worldSettings.globalAnimationSpeed valueAttr="value" labelAttr="label" localize=false}}</select></label>
+        <label><input type="hidden" name="settings.world.disabledDuringCombat" value="false" /><input type="checkbox" name="settings.world.disabledDuringCombat" value="true" {{#if worldSettings.disabledDuringCombat}}checked{{/if}} /> Disabled During Combat</label>
+        <label><input type="hidden" name="settings.world.disabledForInitiative" value="false" /><input type="checkbox" name="settings.world.disabledForInitiative" value="true" {{#if worldSettings.disabledForInitiative}}checked{{/if}} /> Disabled For Initiative</label>
+        <label><input type="hidden" name="settings.world.hide3dDiceOnSecretRolls" value="false" /><input type="checkbox" name="settings.world.hide3dDiceOnSecretRolls" value="true" {{#if worldSettings.hide3dDiceOnSecretRolls}}checked{{/if}} /> Hide 3D Dice On Secret Rolls</label>
+        <label>Show Ghost Dice<select name="settings.world.showGhostDice">{{selectOptions ghostModeOptions selected=worldSettings.showGhostDice valueAttr="value" labelAttr="label" localize=false}}</select></label>
+        <label><input type="hidden" name="settings.world.hideNpcRolls" value="false" /><input type="checkbox" name="settings.world.hideNpcRolls" value="true" {{#if worldSettings.hideNpcRolls}}checked{{/if}} /> Hide NPC Rolls</label>
+        <label><input type="hidden" name="settings.world.animateRollTable" value="false" /><input type="checkbox" name="settings.world.animateRollTable" value="true" {{#if worldSettings.animateRollTable}}checked{{/if}} /> Animate Roll Tables</label>
+        <label><input type="hidden" name="settings.world.animateInlineRoll" value="false" /><input type="checkbox" name="settings.world.animateInlineRoll" value="true" {{#if worldSettings.animateInlineRoll}}checked{{/if}} /> Animate Inline Rolls</label>
+        <label><input type="hidden" name="settings.world.enabledSimultaneousRolls" value="false" /><input type="checkbox" name="settings.world.enabledSimultaneousRolls" value="true" {{#if worldSettings.enabledSimultaneousRolls}}checked{{/if}} /> Enable Simultaneous Rolls</label>
+        <label><input type="hidden" name="settings.world.enabledSimultaneousRollForMessage" value="false" /><input type="checkbox" name="settings.world.enabledSimultaneousRollForMessage" value="true" {{#if worldSettings.enabledSimultaneousRollForMessage}}checked{{/if}} /> Merge Same-Message Rolls</label>
+      </div>
+    </section>
+  {{/if}}
+
+  <section class="dice-tower-config__panel">
+    <h2>Appearance: Global</h2>
+    <div class="dice-tower-config__grid">
+      <label>Colorset<select name="appearance.global.colorset">{{selectOptions colorsets selected=globalAppearance.colorset valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>Texture<select name="appearance.global.texture">{{selectOptions textures selected=globalAppearance.texture valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>Material<select name="appearance.global.material">{{selectOptions materials selected=globalAppearance.material valueAttr="value" labelAttr="label" localize=false}}</select></label>
+      <label>System<input type="text" name="appearance.global.system" value="{{globalAppearance.system}}" /></label>
+      <label>Font<input type="text" name="appearance.global.font" value="{{globalAppearance.font}}" /></label>
+      <label>Label Color<input type="color" name="appearance.global.labelColor" value="{{globalAppearance.labelColor}}" /></label>
+      <label>Dice Color<input type="color" name="appearance.global.diceColor" value="{{globalAppearance.diceColor}}" /></label>
+      <label>Outline Color<input type="color" name="appearance.global.outlineColor" value="{{globalAppearance.outlineColor}}" /></label>
+      <label>Edge Color<input type="color" name="appearance.global.edgeColor" value="{{globalAppearance.edgeColor}}" /></label>
+    </div>
+  </section>
+
+  <section class="dice-tower-config__panel">
+    <h2>Appearance: Per-Die Overrides</h2>
+    <div class="dice-tower-config__table dice-tower-config__table--appearance">
+      <div class="dice-tower-config__row dice-tower-config__row--header">
+        <span>Die</span>
+        <span>Enabled</span>
+        <span>Colorset</span>
+        <span>Texture</span>
+        <span>Material</span>
+        <span>System</span>
+      </div>
+      {{#each appearanceScopes as |scope|}}
+        <div class="dice-tower-config__row">
+          <span>{{scope.id}}</span>
+          <span><input type="hidden" name="appearance.{{scope.id}}.enabled" value="false" /><input type="checkbox" name="appearance.{{scope.id}}.enabled" value="true" {{#if scope.enabled}}checked{{/if}} /></span>
+          <span><select name="appearance.{{scope.id}}.colorset">{{selectOptions ../colorsets selected=scope.colorset valueAttr="value" labelAttr="label" localize=false}}</select></span>
+          <span><select name="appearance.{{scope.id}}.texture">{{selectOptions ../textures selected=scope.texture valueAttr="value" labelAttr="label" localize=false}}</select></span>
+          <span><select name="appearance.{{scope.id}}.material">{{selectOptions ../materials selected=scope.material valueAttr="value" labelAttr="label" localize=false}}</select></span>
+          <span><input type="text" name="appearance.{{scope.id}}.system" value="{{scope.system}}" /></span>
+        </div>
+      {{/each}}
+    </div>
+  </section>
+
+  <section class="dice-tower-config__panel">
+    <h2>Special Effects</h2>
+    <div class="dice-tower-config__table dice-tower-config__table--sfx">
+      <div class="dice-tower-config__row dice-tower-config__row--header">
+        <span>Dice Type</span>
+        <span>On Result</span>
+        <span>Effect</span>
+        <span>Global</span>
+      </div>
+      {{#each sfxRows as |row|}}
+        <div class="dice-tower-config__row">
+          <span><input type="text" name="sfxRows.{{row.index}}.diceType" value="{{row.diceType}}" placeholder="d20" /></span>
+          <span><input type="text" name="sfxRows.{{row.index}}.onResult" value="{{row.onResult}}" placeholder="20, kh" /></span>
+          <span><select name="sfxRows.{{row.index}}.specialEffect">{{selectOptions ../sfxModeOptions selected=row.specialEffect valueAttr="value" labelAttr="label" localize=false blank=""}}</select></span>
+          <span><input type="hidden" name="sfxRows.{{row.index}}.isGlobal" value="false" /><input type="checkbox" name="sfxRows.{{row.index}}.isGlobal" value="true" {{#if row.isGlobal}}checked{{/if}} /></span>
+        </div>
+      {{/each}}
+    </div>
+    <p class="dice-tower-config__hint">Use comma-separated values in On Result, for example: 20, kh.</p>
+  </section>
 </form>

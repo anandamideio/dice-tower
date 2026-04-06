@@ -22,8 +22,9 @@ import {
   DirectionalLight,
   HalfFloatType,
   HemisphereLight,
+  LoadingManager,
   Mesh,
-  MeshBasicMaterial,
+  NoToneMapping,
   Object3D,
   PCFShadowMap,
   PCFSoftShadowMap,
@@ -62,10 +63,14 @@ export interface DiceBoxConfig extends QualitySettings {
   canvasZIndex: 'over' | 'under';
   /** Whether immersive darkness (tone mapping responds to scene darkness). */
   immersiveDarkness: boolean;
-  /** Milliseconds before the canvas auto-hides after dice settle. */
-  timeBeforeHide: number;
+  /** Milliseconds before the canvas auto-hides after dice settle. Defaults to 2000. */
+  timeBeforeHide?: number;
   /** Type qualifier for this box — 'board' (main) or 'showcase' (config preview). */
   boxType: 'board' | 'showcase';
+  /** Camera distance preset. */
+  cameraDistance?: CameraDistanceMode;
+  /** Shadow-plane material settings. */
+  deskSurface?: Partial<DeskSurfaceConfig>;
   /** Optional dimensions override; if absent, uses container client size. */
   dimensions?: { width: number; height: number; margin?: BoxMargin };
 }
@@ -75,6 +80,13 @@ export interface BoxMargin {
   bottom: number;
   left: number;
   right: number;
+}
+
+export type CameraDistanceMode = 'close' | 'medium' | 'far';
+
+export interface DeskSurfaceConfig {
+  shadowOpacity: number;
+  shadowColor: number;
 }
 
 // ─── Internal camera heights ──────────────────────────────────────────────────
@@ -94,11 +106,66 @@ export interface BloomUniforms {
   threshold: number;
 }
 
+export interface AssetLoadProgress {
+  phase: 'idle' | 'roughness' | 'environment' | 'complete' | 'error';
+  loaded: number;
+  total: number;
+  percent: number;
+  item?: string;
+}
+
+export interface RenderFrameContext {
+  deltaSeconds: number;
+  elapsedSeconds: number;
+  fixedStepSeconds: number;
+  fixedSteps: number;
+  interpolationAlpha: number;
+  frame: number;
+}
+
 const DEFAULT_BLOOM: BloomUniforms = {
   strength: 1.1,
   radius: 0.2,
   threshold: 0,
 };
+
+const DEFAULT_HIDE_DELAY_MS = 2000;
+const DEFAULT_CAMERA_DISTANCE: CameraDistanceMode = 'far';
+const DEFAULT_DESK_SURFACE: DeskSurfaceConfig = {
+  shadowOpacity: 0.5,
+  shadowColor: 0x000000,
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeDiceBoxConfig(config: DiceBoxConfig): DiceBoxConfig {
+  const hideDelay =
+    typeof config.timeBeforeHide === 'number' && Number.isFinite(config.timeBeforeHide)
+      ? Math.max(0, config.timeBeforeHide)
+      : DEFAULT_HIDE_DELAY_MS;
+
+  const surfaceOpacity =
+    typeof config.deskSurface?.shadowOpacity === 'number' && Number.isFinite(config.deskSurface.shadowOpacity)
+      ? clamp(config.deskSurface.shadowOpacity, 0, 1)
+      : DEFAULT_DESK_SURFACE.shadowOpacity;
+
+  const surfaceColor =
+    typeof config.deskSurface?.shadowColor === 'number' && Number.isFinite(config.deskSurface.shadowColor)
+      ? config.deskSurface.shadowColor
+      : DEFAULT_DESK_SURFACE.shadowColor;
+
+  return {
+    ...config,
+    timeBeforeHide: hideDelay,
+    cameraDistance: config.cameraDistance ?? DEFAULT_CAMERA_DISTANCE,
+    deskSurface: {
+      shadowOpacity: surfaceOpacity,
+      shadowColor: surfaceColor,
+    },
+  };
+}
 
 // ─── DiceBox ──────────────────────────────────────────────────────────────────
 
@@ -155,13 +222,28 @@ export class DiceBox {
   // Config snapshot
   config: DiceBoxConfig;
 
+  // Asset loading progress listeners
+  private progressListeners = new Set<(progress: AssetLoadProgress) => void>();
+  private assetLoadProgress: AssetLoadProgress = {
+    phase: 'idle',
+    loaded: 0,
+    total: 0,
+    percent: 0,
+  };
+
+  // Fixed-step timing for physics/render decoupling
+  private fixedStepSeconds = 1 / 60;
+  private fixedStepAccumulator = 0;
+  private lastFrameTimeMs: number | null = null;
+  private frameCount = 0;
+
   // Rendering quality mirrors (derived from config)
   private realisticLighting = false;
   private anisotropy = 1;
 
   private constructor(container: HTMLElement, config: DiceBoxConfig) {
     this.container = container;
-    this.config = config;
+    this.config = normalizeDiceBoxConfig(config);
   }
 
   // ─── Factory ───────────────────────────────────────────────────────────────
@@ -195,6 +277,9 @@ export class DiceBox {
 
     if (this.realisticLighting) {
       this.renderer.toneMapping = ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.0;
+    } else {
+      this.renderer.toneMapping = NoToneMapping;
       this.renderer.toneMappingExposure = 1.0;
     }
 
@@ -258,19 +343,62 @@ export class DiceBox {
     if (this.realisticLighting) {
       await this.loadHDREnvironment();
     } else {
-      this.loadCubemapEnvironment();
+      await this.loadCubemapEnvironment();
     }
+  }
+
+  getAssetLoadProgress(): AssetLoadProgress {
+    return { ...this.assetLoadProgress };
+  }
+
+  onAssetLoadProgress(listener: (progress: AssetLoadProgress) => void): () => void {
+    this.progressListeners.add(listener);
+    listener(this.getAssetLoadProgress());
+    return () => {
+      this.progressListeners.delete(listener);
+    };
+  }
+
+  private emitAssetLoadProgress(progress: AssetLoadProgress): void {
+    this.assetLoadProgress = progress;
+    for (const listener of this.progressListeners) {
+      listener(this.getAssetLoadProgress());
+    }
+  }
+
+  private reportAssetLoad(
+    phase: AssetLoadProgress['phase'],
+    loaded: number,
+    total: number,
+    item?: string,
+  ): void {
+    const safeTotal = Math.max(0, total);
+    const safeLoaded = clamp(loaded, 0, safeTotal || loaded);
+    const percent = safeTotal > 0 ? clamp((safeLoaded / safeTotal) * 100, 0, 100) : 0;
+    this.emitAssetLoadProgress({ phase, loaded: safeLoaded, total: safeTotal, percent, item });
   }
 
   private loadHDREnvironment(): Promise<void> {
     return new Promise((resolve) => {
+      this.reportAssetLoad('roughness', 0, 5, 'environment');
+
+      const manager = new LoadingManager();
+      manager.onProgress = (url, itemsLoaded, itemsTotal) => {
+        const phase = url.endsWith('.hdr') ? 'environment' : 'roughness';
+        this.reportAssetLoad(phase, itemsLoaded, itemsTotal, url);
+      };
+      manager.onError = (url) => {
+        const current = this.getAssetLoadProgress();
+        this.reportAssetLoad('error', current.loaded, Math.max(current.total, 1), url);
+      };
+
       const pmremGen = new PMREMGenerator(
         this.renderer as unknown as ConstructorParameters<typeof PMREMGenerator>[0],
       );
       void pmremGen.compileEquirectangularShader();
 
       // Load roughness maps for texture cache (used by DiceFactory in Stage 4)
-      const texLoader = new TextureLoader();
+      const texLoader = new TextureLoader(manager);
       const base = 'modules/dice-tower/textures/';
       const roughnessMaps = {
         fingerprint: texLoader.load(base + 'roughnessMap_finger.webp'),
@@ -286,7 +414,7 @@ export class DiceBox {
         roughnessMaps,
       };
 
-      new RGBELoader()
+      new RGBELoader(manager)
         .setDataType(HalfFloatType)
         .setPath('modules/dice-tower/textures/equirectangular/')
         .load('blouberg_sunrise_2_1k.hdr', (hdrTex) => {
@@ -299,19 +427,46 @@ export class DiceBox {
           (this.renderer as unknown as Record<string, unknown>).envMap = envMap;
           hdrTex.dispose();
           pmremGen.dispose();
+          const current = this.getAssetLoadProgress();
+          const total = Math.max(current.total, 5);
+          this.reportAssetLoad('complete', total, total, 'environment');
           resolve();
+        }, undefined, () => {
+          pmremGen.dispose();
+          void this.loadCubemapEnvironment().then(resolve);
         });
     });
   }
 
-  private loadCubemapEnvironment(): void {
-    const loader = new CubeTextureLoader();
-    loader.setPath('modules/dice-tower/textures/cubemap/');
-    const cubemap = loader.load(['px.webp', 'nx.webp', 'py.webp', 'ny.webp', 'pz.webp', 'nz.webp']);
-    if (this.scene) {
-      this.scene.environment = cubemap;
-    }
-    (this.renderer as unknown as Record<string, unknown>).envMap = cubemap;
+  private loadCubemapEnvironment(): Promise<void> {
+    return new Promise((resolve) => {
+      this.reportAssetLoad('environment', 0, 6, 'cubemap');
+
+      const manager = new LoadingManager();
+      manager.onProgress = (url, itemsLoaded, itemsTotal) => {
+        this.reportAssetLoad('environment', itemsLoaded, itemsTotal, url);
+      };
+      manager.onError = (url) => {
+        const current = this.getAssetLoadProgress();
+        this.reportAssetLoad('error', current.loaded, Math.max(current.total, 1), url);
+      };
+
+      const loader = new CubeTextureLoader(manager);
+      loader.setPath('modules/dice-tower/textures/cubemap/');
+      loader.load(
+        ['px.webp', 'nx.webp', 'py.webp', 'ny.webp', 'pz.webp', 'nz.webp'],
+        (cubemap) => {
+          if (this.scene) {
+            this.scene.environment = cubemap;
+          }
+          (this.renderer as unknown as Record<string, unknown>).envMap = cubemap;
+          const current = this.getAssetLoadProgress();
+          const total = Math.max(current.total, 6);
+          this.reportAssetLoad('complete', total, total, 'cubemap');
+          resolve();
+        },
+      );
+    });
   }
 
   // ─── Scene layout ──────────────────────────────────────────────────────────
@@ -382,12 +537,8 @@ export class DiceBox {
 
     this.camera = new PerspectiveCamera(20, w / h, 10, this.cameraHeight.max * 1.3);
 
-    if (this.config.boxType === 'showcase') {
-      // Showcase positions camera based on dice count (populated in Stage 5)
-      this.camera.position.z = this.cameraHeight.medium;
-    } else {
-      this.camera.position.z = this.cameraHeight.far;
-    }
+    const distance = this.config.cameraDistance ?? DEFAULT_CAMERA_DISTANCE;
+    this.camera.position.z = this.cameraHeight[distance];
 
     this.camera.lookAt(new Vector3(0, 0, 0));
     this.camera.near = 10;
@@ -462,12 +613,17 @@ export class DiceBox {
     if (this.desk) {
       this.scene.remove(this.desk);
       this.desk.geometry.dispose();
-      (this.desk.material as MeshBasicMaterial).dispose();
+      (this.desk.material as ShadowMaterial).dispose();
     }
 
     const cw = (this.display.containerWidth ?? 800) * 3;
     const ch = (this.display.containerHeight ?? 600) * 3;
-    const shadowPlane = new ShadowMaterial({ opacity: 0.5, depthWrite: false });
+    const deskSurface = this.config.deskSurface ?? DEFAULT_DESK_SURFACE;
+    const shadowPlane = new ShadowMaterial({
+      color: new Color(deskSurface.shadowColor),
+      opacity: deskSurface.shadowOpacity,
+      depthWrite: false,
+    });
     this.desk = new Mesh(new PlaneGeometry(cw, ch, 1, 1), shadowPlane);
     this.desk.receiveShadow = this.renderer.shadowMap.enabled;
     this.desk.position.set(0, 0, -1);
@@ -611,6 +767,32 @@ export class DiceBox {
     }
   }
 
+  /** Update desk shadow material properties at runtime. */
+  setDeskSurfaceMaterial(surface: Partial<DeskSurfaceConfig>): void {
+    this.config = normalizeDiceBoxConfig({
+      ...this.config,
+      deskSurface: {
+        ...(this.config.deskSurface ?? DEFAULT_DESK_SURFACE),
+        ...surface,
+      },
+    });
+    this.setupDesk();
+    this.renderScene();
+  }
+
+  /** Set camera distance preset and re-render. */
+  setCameraDistance(distance: CameraDistanceMode): void {
+    this.config.cameraDistance = distance;
+    this.setupCamera();
+    this.renderScene();
+  }
+
+  /** Configure fixed physics-step frequency used for interpolation timing context. */
+  setFixedPhysicsFps(hz: number): void {
+    if (!Number.isFinite(hz) || hz <= 0) return;
+    this.fixedStepSeconds = 1 / hz;
+  }
+
   // ─── Immersive darkness ────────────────────────────────────────────────────
 
   /** Call each frame to sync tone mapping with scene darkness level (0–1). */
@@ -645,12 +827,41 @@ export class DiceBox {
    * The optional `onFrame` callback runs each tick before rendering — Stage 5
    * plugs in physics frame interpolation here.
    */
-  startAnimating(onFrame?: () => void): void {
+  startAnimating(onFrame?: (context: RenderFrameContext) => void): void {
     if (this.animFrameId !== null) return;
 
-    const loop = (): void => {
+    this.lastFrameTimeMs = null;
+    this.fixedStepAccumulator = 0;
+    this.frameCount = 0;
+
+    const loop = (timeMs: number): void => {
       this.animFrameId = requestAnimationFrame(loop);
-      onFrame?.();
+
+      if (this.lastFrameTimeMs === null) {
+        this.lastFrameTimeMs = timeMs;
+      }
+
+      const deltaSeconds = Math.min(0.25, (timeMs - this.lastFrameTimeMs) / 1000);
+      this.lastFrameTimeMs = timeMs;
+
+      this.fixedStepAccumulator += deltaSeconds;
+      let fixedSteps = 0;
+      while (this.fixedStepAccumulator >= this.fixedStepSeconds) {
+        this.fixedStepAccumulator -= this.fixedStepSeconds;
+        fixedSteps += 1;
+      }
+
+      this.frameCount += 1;
+
+      onFrame?.({
+        deltaSeconds,
+        elapsedSeconds: this.clock.getElapsedTime(),
+        fixedStepSeconds: this.fixedStepSeconds,
+        fixedSteps,
+        interpolationAlpha: this.fixedStepAccumulator / this.fixedStepSeconds,
+        frame: this.frameCount,
+      });
+
       if (this.isVisible) {
         this.renderScene();
       }
@@ -667,6 +878,8 @@ export class DiceBox {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
+    this.lastFrameTimeMs = null;
+    this.fixedStepAccumulator = 0;
     this.cancelAutoHide();
   }
 
@@ -711,10 +924,13 @@ export class DiceBox {
    * Call from a ResizeObserver or Foundry's canvas resize hook.
    */
   resize(width?: number, height?: number): void {
-    const w = width ?? this.container.clientWidth;
-    const h = height ?? this.container.clientHeight;
-    this.display.currentWidth = w;
-    this.display.currentHeight = h;
+    if (width !== undefined || height !== undefined) {
+      this.config.dimensions = {
+        width: width ?? this.config.dimensions?.width ?? this.container.clientWidth,
+        height: height ?? this.config.dimensions?.height ?? this.container.clientHeight,
+        margin: this.config.dimensions?.margin,
+      };
+    }
     this.setScene(this.config.dimensions);
   }
 
@@ -726,7 +942,7 @@ export class DiceBox {
    */
   async update(partial: Partial<DiceBoxConfig>): Promise<void> {
     const prev = this.config;
-    this.config = { ...this.config, ...partial };
+    this.config = normalizeDiceBoxConfig({ ...this.config, ...partial });
 
     const qualityChanged = partial.imageQuality !== undefined && partial.imageQuality !== prev.imageQuality;
     const shadowChanged = partial.shadowQuality !== undefined && partial.shadowQuality !== prev.shadowQuality;
@@ -738,6 +954,8 @@ export class DiceBox {
       this.renderer.shadowMap.enabled = this.config.shadowQuality !== 'low' || this.config.imageQuality !== 'low';
       this.renderer.shadowMap.type =
         this.config.shadowQuality === 'high' ? PCFSoftShadowMap : PCFShadowMap;
+      this.renderer.toneMapping = this.realisticLighting ? ACESFilmicToneMapping : NoToneMapping;
+      this.renderer.toneMappingExposure = 1.0;
 
       // Reload environment at new quality level
       await this.loadEnvironment();
@@ -755,8 +973,13 @@ export class DiceBox {
       this.applyZIndex();
     }
 
-    if (ppChanged && this.realisticLighting) {
-      this.setupPostProcessing();
+    if (ppChanged) {
+      if (this.realisticLighting) {
+        this.setupPostProcessing();
+      } else {
+        this.renderPipeline?.dispose?.();
+        this.renderPipeline = null;
+      }
     }
 
     // Always reflow scene layout when scale/autoscale change
@@ -808,6 +1031,9 @@ export class DiceBox {
     // Dispose renderer
     this.renderer.dispose();
     this.renderer.domElement.remove();
+
+    this.progressListeners.clear();
+    this.reportAssetLoad('idle', 0, 0);
   }
 }
 

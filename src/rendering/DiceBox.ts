@@ -1585,7 +1585,7 @@ export class DiceBox {
 
       // Load roughness maps for texture cache (used by DiceFactory in Stage 4)
       const texLoader = new TextureLoader(manager);
-      const base = 'modules/dice-tower/textures/';
+      const base = 'modules/dice-tower/assets/textures/';
       const roughnessMaps = {
         fingerprint: texLoader.load(base + 'roughnessMap_finger.webp'),
         wood: texLoader.load(base + 'roughnessMap_wood.webp'),
@@ -1602,7 +1602,7 @@ export class DiceBox {
 
       new RGBELoader(manager)
         .setDataType(HalfFloatType)
-        .setPath('modules/dice-tower/textures/equirectangular/')
+        .setPath('modules/dice-tower/assets/textures/equirectangular/')
         .load('blouberg_sunrise_2_1k.hdr', (hdrTex) => {
           const envMap = pmremGen.fromEquirectangular(hdrTex).texture;
           envMap.colorSpace = SRGBColorSpace;
@@ -1638,7 +1638,7 @@ export class DiceBox {
       };
 
       const loader = new CubeTextureLoader(manager);
-      loader.setPath('modules/dice-tower/textures/cubemap/');
+      loader.setPath('modules/dice-tower/assets/textures/cubemap/');
       loader.load(
         ['px.webp', 'nx.webp', 'py.webp', 'ny.webp', 'pz.webp', 'nz.webp'],
         (cubemap) => {

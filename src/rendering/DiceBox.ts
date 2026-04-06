@@ -2137,6 +2137,7 @@ export class DiceBox {
     const shadowChanged = partial.shadowQuality !== undefined && partial.shadowQuality !== prev.shadowQuality;
     const ppChanged =
       partial.glow !== undefined || partial.antialiasing !== undefined;
+    const layoutChanged = partial.dimensions !== undefined;
 
     if (qualityChanged) {
       this.realisticLighting = this.config.imageQuality !== 'low';
@@ -2174,6 +2175,13 @@ export class DiceBox {
     // Always reflow scene layout when scale/autoscale change
     if (partial.scale !== undefined || partial.autoscale !== undefined) {
       this.updateScale(this.config.scale, this.config.autoscale);
+    }
+
+    if (layoutChanged) {
+      this.setScene(this.config.dimensions);
+      if (this.runtimeReady) {
+        await this.ensurePhysicsInitialized();
+      }
     }
 
     // Ensure materials pick up changes on next frame

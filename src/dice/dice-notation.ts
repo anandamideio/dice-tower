@@ -128,6 +128,53 @@ function resolveSpecialEffects(
   return deduped;
 }
 
+function resolveAppearanceForDie(
+  appearance: DiceNotationParserOptions['appearance'],
+  dieType: DieResult['type'],
+): DiceAppearance | undefined {
+  if (!appearance || typeof appearance !== 'object') {
+    return undefined;
+  }
+
+  const scoped = appearance[dieType];
+  if (scoped && typeof scoped === 'object') {
+    return scoped;
+  }
+
+  const global = appearance.global;
+  if (global && typeof global === 'object') {
+    return global;
+  }
+
+  return undefined;
+}
+
+function applyAppearanceOptions(
+  die: DieResult,
+  appearance: DiceNotationParserOptions['appearance'],
+): void {
+  const resolved = resolveAppearanceForDie(appearance, die.type);
+  if (!resolved) {
+    return;
+  }
+
+  if (typeof die.options.colorset !== 'string' && typeof resolved.colorset === 'string') {
+    die.options.colorset = resolved.colorset;
+  }
+
+  if (typeof die.options.texture !== 'string' && typeof resolved.texture === 'string') {
+    die.options.texture = resolved.texture;
+  }
+
+  if (typeof die.options.material !== 'string' && typeof resolved.material === 'string') {
+    die.options.material = resolved.material;
+  }
+
+  if (typeof die.options.system !== 'string' && typeof resolved.system === 'string') {
+    die.options.system = resolved.system;
+  }
+}
+
 function addDieToThrow(
   die: DiceTerm,
   index: number,
@@ -197,6 +244,8 @@ function addDieToThrow(
   ) {
     delete entry.options.flavor;
   }
+
+  applyAppearanceOptions(entry, options.appearance);
 
   target.dice.push(entry);
 }

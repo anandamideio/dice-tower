@@ -33,7 +33,11 @@ declare global {
     whisper: string[];
     blind: boolean;
     user: User;
+    isRoll?: boolean;
+    isContentVisible?: boolean;
+    sound?: string;
     flags?: Record<string, unknown>;
+    getFlag?(scope: string, key: string): unknown;
     /** DSN-internal flag: animation is in progress. */
     _dice3danimating?: boolean;
   }
@@ -51,6 +55,7 @@ declare global {
     dice: DiceTerm[];
     formula: string;
     total: number | undefined;
+    options?: Record<string, unknown>;
     /** DSN extension: flag for ghost dice. */
     ghost?: boolean;
     /** DSN extension: flag for secret rolls. */
@@ -124,7 +129,7 @@ declare global {
    */
   type DiceTowerMessageProcessedHook = (
     messageId: string,
-    context: { rolls: Roll[]; user: User; blind: boolean },
+    context: { rolls: Roll[]; user: User; blind: boolean; willTrigger3DRoll?: boolean },
   ) => void;
 
   // ── Dice so Nice compatibility shims ──
@@ -299,6 +304,9 @@ declare global {
 
   interface DiceConfig {
     terms: Record<string, DiceTermConstructor>;
+    rolls?: Array<{
+      fromJSON?(json: string): Roll;
+    }>;
   }
 
   const CONFIG: {

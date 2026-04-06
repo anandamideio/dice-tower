@@ -31,9 +31,12 @@ export class PhysicsWorkerClient {
     | { resolve: (result: RealtimeStepResult) => void; reject: (reason?: unknown) => void }
     | null = null;
 
+  private destroyed = false;
+
   constructor() {
     this.worker = new Worker(new URL('../workers/physics-worker.ts', import.meta.url), {
       type: 'module',
+      name: 'dice-tower-physics',
     });
 
     this.worker.addEventListener('message', this.handleMessage);
@@ -93,6 +96,8 @@ export class PhysicsWorkerClient {
   }
 
   destroy(): void {
+    this.destroyed = true;
+
     if (this.initialized) {
       this.postMessage({ type: 'destroy' });
     }
@@ -152,10 +157,43 @@ export class PhysicsWorkerClient {
   };
 
   private handleWorkerError = (event: ErrorEvent): void => {
-    this.rejectPending(new Error(event.message || 'Unknown worker error.'));
+    if (this.destroyed) {
+      return;
+    }
+
+    const details: string[] = [];
+    if (event.message && event.message.length > 0) {
+      details.push(event.message);
+    }
+
+    if (event.filename && event.filename.length > 0) {
+      const line = Number.isFinite(event.lineno) ? String(event.lineno) : '?';
+      const column = Number.isFinite(event.colno) ? String(event.colno) : '?';
+      details.push(`${event.filename}:${line}:${column}`);
+    }
+
+    const nested = event.error as unknown;
+    if (nested instanceof Error) {
+      if (nested.message && nested.message.length > 0) {
+        details.push(nested.message);
+      }
+      if (nested.stack && nested.stack.length > 0) {
+        details.push(nested.stack);
+      }
+    }
+
+    const message = details.length > 0
+      ? `Physics worker startup error: ${details.join(' | ')}`
+      : 'Physics worker startup error: Unknown worker error.';
+
+    this.rejectPending(new Error(message));
   };
 
   private handleWorkerMessageError = (): void => {
+    if (this.destroyed) {
+      return;
+    }
+
     this.rejectPending(new Error('Physics worker emitted an unreadable message.'));
   };
 

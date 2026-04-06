@@ -17,6 +17,9 @@ import type {
   ThrowingForce,
 } from './rendering.js';
 
+/** Secret-roll ghost display modes matching DSN 4.2. */
+export type GhostDiceMode = '0' | '1' | '2';
+
 /** World-scoped settings (GM-only). */
 export interface WorldSettings {
   /** Maximum number of dice rendered simultaneously. */
@@ -32,8 +35,8 @@ export interface WorldSettings {
   disabledForInitiative: boolean;
   /** Hide 3D dice for secret/blind rolls. */
   hide3dDiceOnSecretRolls: boolean;
-  /** Show "ghost" dice for hidden rolls. */
-  showGhostDice: boolean;
+  /** Show "ghost" dice for hidden rolls (0=off, 1=all, 2=owner only). */
+  showGhostDice: GhostDiceMode;
   /** Hide NPC roll animations. */
   hideNpcRolls: boolean;
   /** Animate rolls triggered by roll tables. */

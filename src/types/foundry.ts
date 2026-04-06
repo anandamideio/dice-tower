@@ -9,6 +9,10 @@
 // ── Core document stubs ──
 
 declare global {
+  interface Constructor<T = object> {
+    new (...args: never[]): T;
+  }
+
   /** A Foundry User document. */
   interface User {
     id: string;
@@ -23,11 +27,13 @@ declare global {
   /** A Foundry ChatMessage document. */
   interface ChatMessage {
     id: string;
+    content?: string;
     rolls: Roll[];
     speaker: ChatSpeakerData;
     whisper: string[];
     blind: boolean;
     user: User;
+    flags?: Record<string, unknown>;
     /** DSN-internal flag: animation is in progress. */
     _dice3danimating?: boolean;
   }
@@ -49,6 +55,7 @@ declare global {
     ghost?: boolean;
     /** DSN extension: flag for secret rolls. */
     secret?: boolean;
+    isContentVisible?: boolean;
   }
 
   /** A single DiceTerm within a Roll. */
@@ -154,10 +161,37 @@ declare global {
   }
 
   interface GameSettings {
-    register(module: string, key: string, data: Record<string, unknown>): void;
-    registerMenu(module: string, key: string, data: Record<string, unknown>): void;
+    menus?: Map<string, SettingMenuRegistration>;
+    register(module: string, key: string, data: SettingRegistration<unknown>): void;
+    registerMenu(module: string, key: string, data: SettingMenuRegistration): void;
     get(module: string, key: string): unknown;
     set(module: string, key: string, value: unknown): Promise<unknown>;
+  }
+
+  interface SettingRegistration<T> {
+    name: string;
+    hint: string;
+    scope: 'world' | 'client';
+    config: boolean;
+    default: T;
+    type: Constructor | StringConstructor | NumberConstructor | BooleanConstructor | ObjectConstructor;
+    choices?: Record<string, string>;
+    range?: {
+      min: number;
+      max: number;
+      step: number;
+    };
+    requiresReload?: boolean;
+    onChange?: (value: T) => void;
+  }
+
+  interface SettingMenuRegistration {
+    name: string;
+    label: string;
+    hint: string;
+    icon: string;
+    restricted: boolean;
+    type: Constructor;
   }
 
   interface GameI18n {
@@ -193,6 +227,10 @@ declare global {
     canvas: GameCanvas;
     modules: GameModules;
     dice3d?: import('../api/dice3d.js').IDice3D;
+    socket?: {
+      emit?(namespace: string, payload: unknown): void;
+      on?(namespace: string, listener: (...args: unknown[]) => void): void;
+    };
   }
 
   const game: Game;
@@ -201,6 +239,8 @@ declare global {
 
   interface FoundryUtils {
     duplicate<T>(data: T): T;
+    expandObject<T extends Record<string, unknown>>(data: Record<string, unknown>): T;
+    flattenObject<T extends Record<string, unknown>>(data: T): Record<string, unknown>;
     mergeObject<T extends Record<string, unknown>>(
       original: T,
       other: Partial<T>,
@@ -265,11 +305,46 @@ declare global {
     Dice: DiceConfig;
   };
 
+  interface ApplicationOptions {
+    id?: string;
+    title?: string;
+    template?: string;
+    width?: number;
+    height?: number | 'auto';
+    closeOnSubmit?: boolean;
+    submitOnClose?: boolean;
+    submitOnChange?: boolean;
+    classes?: string[];
+    [key: string]: unknown;
+  }
+
+  abstract class Application {
+    static get defaultOptions(): ApplicationOptions;
+    options: ApplicationOptions;
+    constructor(options?: Partial<ApplicationOptions>);
+    render(force?: boolean, options?: Record<string, unknown>): this;
+    close(options?: Record<string, unknown>): Promise<void>;
+  }
+
+  abstract class FormApplication<TObject = Record<string, unknown>> extends Application {
+    object: TObject;
+    constructor(object?: TObject, options?: Partial<ApplicationOptions>);
+    getData(options?: Record<string, unknown>): Promise<Record<string, unknown>> | Record<string, unknown>;
+    protected _updateObject(event: Event, formData: Record<string, unknown>): Promise<void> | void;
+  }
+
+  function renderTemplate(path: string, data?: Record<string, unknown>): Promise<string>;
+
   // ── UI ──
 
   const ui: {
     chat: { element: HTMLElement };
     sidebar: { popouts: { chat?: { element: HTMLElement } } };
+    notifications?: {
+      info(message: string): void;
+      warn(message: string): void;
+      error(message: string): void;
+    };
   };
 }
 

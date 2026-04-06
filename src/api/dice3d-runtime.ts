@@ -22,6 +22,7 @@ import { MODULE_ID } from '../config/constants.js';
 import type { IDice3D, IDiceBox, IDiceFactory, IDiceSFXClass, IDiceSystem } from './dice3d.js';
 
 const OVERLAY_ID = `${MODULE_ID}-overlay`;
+const SIMULTANEOUS_ROLL_MERGE_WINDOW_MS = 80;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -74,6 +75,36 @@ function ensureOverlayHost(): HTMLElement {
   host.style.zIndex = '0';
   document.body.appendChild(host);
   return host;
+}
+
+function resolveSpeakerActor(speaker?: Record<string, unknown> | null): { hasPlayerOwner: boolean } | null {
+  if (!speaker || typeof speaker !== 'object') {
+    return null;
+  }
+
+  const actorId = speaker.actor;
+  if (typeof actorId !== 'string' || actorId.length === 0) {
+    return null;
+  }
+
+  const actorCollection = (game as unknown as { actors?: { get?: (id: string) => unknown } }).actors;
+  if (!actorCollection || typeof actorCollection.get !== 'function') {
+    return null;
+  }
+
+  const actor = actorCollection.get(actorId);
+  if (!actor || typeof actor !== 'object') {
+    return null;
+  }
+
+  return {
+    hasPlayerOwner: (actor as { hasPlayerOwner?: unknown }).hasPlayerOwner === true,
+  };
+}
+
+function isCombatActive(): boolean {
+  const combat = (game as unknown as { combat?: { started?: unknown } | null }).combat;
+  return combat?.started === true;
 }
 
 export class Dice3DRuntime implements IDice3D {
@@ -149,7 +180,15 @@ export class Dice3DRuntime implements IDice3D {
   }
 
   isEnabled(): boolean {
-    return this.clientSettings.enabled;
+    if (!this.clientSettings.enabled) {
+      return false;
+    }
+
+    if (this.worldSettings.disabledDuringCombat && isCombatActive()) {
+      return false;
+    }
+
+    return true;
   }
 
   async showForRoll(
@@ -164,11 +203,17 @@ export class Dice3DRuntime implements IDice3D {
   ): Promise<boolean> {
     void synchronize;
     void users;
-    void speaker;
 
     await this.refreshSettings();
 
     const rollUser = user ?? game.user;
+
+    if (this.worldSettings.hideNpcRolls) {
+      const actor = resolveSpeakerActor(speaker);
+      if (actor && !actor.hasPlayerOwner) {
+        return false;
+      }
+    }
 
     if (!this.isEnabled()) {
       return false;
@@ -292,7 +337,10 @@ export class Dice3DRuntime implements IDice3D {
       enableFlavorColorset: this.clientSettings.enableFlavorColorset,
       user: rollUser,
       appearance: getUserAppearanceFlags(rollUser),
-      specialEffects: getMergedSfxListForUser(rollUser),
+      specialEffects: getMergedSfxListForUser(rollUser, {
+        viewer: game.user,
+        includeOthers: this.clientSettings.showOthersSFX,
+      }),
     });
 
     if (notation.throws.every((throwGroup) => throwGroup.dice.length === 0)) {
@@ -433,6 +481,9 @@ export class Dice3DRuntime implements IDice3D {
       hideAfterRoll: this.clientSettings.hideAfterRoll,
       allowInteractivity: true,
       maxDiceNumber: this.worldSettings.maxDiceNumber,
+      queueMergeWindowMs: this.worldSettings.enabledSimultaneousRolls
+        ? SIMULTANEOUS_ROLL_MERGE_WINDOW_MS
+        : 0,
       sounds: this.clientSettings.sounds,
       soundsSurface: this.clientSettings.soundsSurface,
       soundsVolume: this.clientSettings.soundsVolume,

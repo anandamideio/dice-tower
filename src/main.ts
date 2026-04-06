@@ -4,11 +4,13 @@ import {
   emitDiceReady,
   migrateDiceTowerSettings,
   MODULE_ID,
+  registerDiceTowerChatHooks,
   registerDiceTowerSettings,
 } from './config/index.js';
 
 Hooks.once('init', () => {
   registerDiceTowerSettings();
+  registerDiceTowerChatHooks();
   console.info(`${MODULE_ID} | Settings registered.`);
 });
 

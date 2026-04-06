@@ -191,9 +191,15 @@ export class DiceSystem {
       | undefined;
     if (saved) {
       for (const diceType of Object.keys(saved)) {
-        if ((saved[diceType] as Record<string, unknown>).system === this.id) {
+        const entry = saved[diceType];
+        const systemSettings = entry.systemSettings;
+        if (
+          entry.system === this.id &&
+          typeof systemSettings === 'object' &&
+          systemSettings !== null
+        ) {
           this._scopedSettings.set(diceType, {
-            ...((saved[diceType] as Record<string, unknown>).systemSettings as Record<string, unknown>),
+            ...(systemSettings as Record<string, unknown>),
           });
         }
       }

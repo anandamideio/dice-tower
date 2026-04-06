@@ -149,6 +149,30 @@ function messageLooksSecret(chatMessage: ChatMessage): boolean {
   return false;
 }
 
+function isCombatActive(): boolean {
+  const combat = (game as unknown as { combat?: { started?: unknown } | null }).combat;
+  return combat?.started === true;
+}
+
+function isNpcSpeakerRoll(chatMessage: ChatMessage): boolean {
+  const actorId = chatMessage.speaker?.actor;
+  if (typeof actorId !== 'string' || actorId.length === 0) {
+    return false;
+  }
+
+  const actors = (game as unknown as { actors?: { get?: (id: string) => unknown } }).actors;
+  if (!actors || typeof actors.get !== 'function') {
+    return false;
+  }
+
+  const actor = actors.get(actorId);
+  if (!actor || typeof actor !== 'object') {
+    return false;
+  }
+
+  return (actor as { hasPlayerOwner?: unknown }).hasPlayerOwner !== true;
+}
+
 function canShowGhostDice(chatMessage: ChatMessage): boolean {
   const worldSettings = getWorldSettingsSnapshot();
 
@@ -169,7 +193,7 @@ function canShowGhostDice(chatMessage: ChatMessage): boolean {
 
 function shouldInterceptMessage(chatMessage: ChatMessage, rolls: Roll[]): boolean {
   const runtime = game.dice3d;
-  if (!runtime || !runtime.isEnabled()) {
+  if (!runtime) {
     return false;
   }
 
@@ -183,6 +207,18 @@ function shouldInterceptMessage(chatMessage: ChatMessage, rolls: Roll[]): boolea
   }
 
   const worldSettings = getWorldSettingsSnapshot();
+
+  if (worldSettings.disabledDuringCombat && isCombatActive()) {
+    return false;
+  }
+
+  if (worldSettings.hideNpcRolls && isNpcSpeakerRoll(chatMessage)) {
+    return false;
+  }
+
+  if (!runtime.isEnabled()) {
+    return false;
+  }
 
   if (parseBoolean(readMessageFlag(chatMessage, 'core', 'initiativeRoll')) && worldSettings.disabledForInitiative) {
     return false;

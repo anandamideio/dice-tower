@@ -16,14 +16,33 @@ const DEFAULT_APPEARANCE: DiceAppearance = {
   edgeColor: '#000000',
   texture: 'none',
   material: 'auto',
-  font: 'Arial',
+  font: 'auto',
   colorset: 'custom',
   system: 'standard',
 };
 
-function cloneDefaultAppearance(): AppearanceMap {
+function resolveUserColor(user: User): string {
+  const color = user.color?.toString?.();
+  if (typeof color === 'string' && color.length > 0) {
+    return color;
+  }
+
+  return DEFAULT_APPEARANCE.diceColor;
+}
+
+function createDefaultAppearanceForUser(user: User): DiceAppearance {
+  const userColor = resolveUserColor(user);
   return {
-    global: { ...DEFAULT_APPEARANCE },
+    ...DEFAULT_APPEARANCE,
+    diceColor: userColor,
+    outlineColor: userColor,
+    edgeColor: userColor,
+  };
+}
+
+function cloneDefaultAppearance(user: User): AppearanceMap {
+  return {
+    global: createDefaultAppearanceForUser(user),
   } as AppearanceMap;
 }
 
@@ -59,9 +78,9 @@ function toArraySfx(value: unknown): SFXLine[] {
   return [];
 }
 
-function normalizeAppearance(value: unknown): AppearanceMap {
+function normalizeAppearance(value: unknown, user: User): AppearanceMap {
   if (!value || typeof value !== 'object') {
-    return cloneDefaultAppearance();
+    return cloneDefaultAppearance(user);
   }
 
   const typed = value as Record<string, unknown>;
@@ -69,7 +88,7 @@ function normalizeAppearance(value: unknown): AppearanceMap {
     return typed as unknown as AppearanceMap;
   }
 
-  const migrated = cloneDefaultAppearance();
+  const migrated = cloneDefaultAppearance(user);
   migrated.global = {
     ...migrated.global,
     ...(typed as Partial<DiceAppearance>),
@@ -97,7 +116,7 @@ export async function setUserSettingsFlags(
 }
 
 export function getUserAppearanceFlags(user: User = game.user): AppearanceMap {
-  return normalizeAppearance(readFlag<unknown>(user, SETTING_KEYS.flags.appearance));
+  return normalizeAppearance(readFlag<unknown>(user, SETTING_KEYS.flags.appearance), user);
 }
 
 export async function setUserAppearanceFlags(
@@ -115,16 +134,31 @@ export async function setUserSfxFlags(lines: SFXLine[], user: User = game.user):
   await user.setFlag(MODULE_ID, SETTING_KEYS.flags.sfxList, lines);
 }
 
-export function getMergedSfxListForUser(user: User = game.user): SFXLine[] {
-  const merged = [...getUserSfxFlags(user)];
-  game.users.forEach((other) => {
-    if (!other.isGM || other.id === user.id) {
-      return;
-    }
+export function getMergedSfxListForUser(
+  user: User = game.user,
+  options?: {
+    includeOthers?: boolean;
+    viewer?: User;
+  },
+): SFXLine[] {
+  const viewer = options?.viewer ?? game.user;
+  const includeOthers = options?.includeOthers ?? true;
 
-    const gmGlobal = getUserSfxFlags(other).filter((line) => line.options?.isGlobal === true);
-    merged.push(...gmGlobal);
-  });
+  const merged: SFXLine[] = [];
+  if (includeOthers || user.id === viewer.id) {
+    merged.push(...getUserSfxFlags(user));
+  }
+
+  if (includeOthers) {
+    game.users.forEach((other) => {
+      if (!other.isGM || other.id === user.id) {
+        return;
+      }
+
+      const gmGlobal = getUserSfxFlags(other).filter((line) => line.options?.isGlobal === true);
+      merged.push(...gmGlobal);
+    });
+  }
 
   const deduped: SFXLine[] = [];
   const seen = new Set<string>();

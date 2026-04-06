@@ -54,10 +54,22 @@ const DEFAULT_APPEARANCE: DiceAppearance = {
   edgeColor: '#000000',
   texture: 'none',
   material: 'auto',
-  font: 'Arial',
+  font: 'auto',
   colorset: 'custom',
   system: 'standard',
 };
+
+function defaultAppearanceForUser(user: User = game.user): DiceAppearance {
+  const color = user.color?.toString?.();
+  const userColor = typeof color === 'string' && color.length > 0 ? color : DEFAULT_APPEARANCE.diceColor;
+
+  return {
+    ...DEFAULT_APPEARANCE,
+    diceColor: userColor,
+    outlineColor: userColor,
+    edgeColor: userColor,
+  };
+}
 
 function localizeOrFallback(key: string, fallback: string): string {
   const localized = game.i18n.localize(key);
@@ -363,9 +375,10 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
     const clientSettings = getClientSettingsSnapshot();
     const worldSettings = getWorldSettingsSnapshot();
     const appearanceFlags = getUserAppearanceFlags();
+    const appearanceFallback = defaultAppearanceForUser();
     const globalAppearance = normalizeAppearanceEntry(
       toRecord(appearanceFlags.global),
-      DEFAULT_APPEARANCE,
+      appearanceFallback,
     );
 
     const appearanceScopes = DIE_TYPES.map((dieType) => {
@@ -403,7 +416,10 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
       globalAppearance,
       appearanceScopes,
       sfxRows,
-      materials: MATERIAL_OPTIONS.map((value) => ({ value, label: value })),
+      materials: MATERIAL_OPTIONS.map((value) => ({
+        value,
+        label: localizeOrFallback(`DICETOWER.Material.${value}`, value),
+      })),
       colorsets: toSelectOptions(
         Object.fromEntries(Object.keys(CORE_COLORSETS).map((name) => [name, name])),
         'Colorset',
@@ -413,48 +429,126 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
         'Texture',
       ),
       hideFxOptions: [
-        { value: 'fadeOut', label: 'fadeOut' },
-        { value: 'none', label: 'none' },
+        {
+          value: 'fadeOut',
+          label: localizeOrFallback('DICETOWER.Settings.hideFX.FadeOut', 'Fade Out'),
+        },
+        {
+          value: 'none',
+          label: localizeOrFallback('DICETOWER.Settings.hideFX.None', 'None'),
+        },
       ],
       imageQualityOptions: [
-        { value: 'low', label: 'low' },
-        { value: 'medium', label: 'medium' },
-        { value: 'high', label: 'high' },
+        {
+          value: 'low',
+          label: localizeOrFallback('DICETOWER.Settings.imageQuality.Low', 'Low'),
+        },
+        {
+          value: 'medium',
+          label: localizeOrFallback('DICETOWER.Settings.imageQuality.Medium', 'Medium'),
+        },
+        {
+          value: 'high',
+          label: localizeOrFallback('DICETOWER.Settings.imageQuality.High', 'High'),
+        },
       ],
       shadowQualityOptions: [
-        { value: 'low', label: 'low' },
-        { value: 'high', label: 'high' },
+        {
+          value: 'low',
+          label: localizeOrFallback('DICETOWER.Settings.shadowQuality.Low', 'Low'),
+        },
+        {
+          value: 'high',
+          label: localizeOrFallback('DICETOWER.Settings.shadowQuality.High', 'High'),
+        },
       ],
       antialiasingOptions: [
-        { value: 'none', label: 'none' },
-        { value: 'smaa', label: 'smaa' },
-        { value: 'msaa', label: 'msaa' },
+        {
+          value: 'none',
+          label: localizeOrFallback('DICETOWER.Settings.antialiasing.None', 'None'),
+        },
+        {
+          value: 'smaa',
+          label: localizeOrFallback('DICETOWER.Settings.antialiasing.SMAA', 'SMAA'),
+        },
+        {
+          value: 'msaa',
+          label: localizeOrFallback('DICETOWER.Settings.antialiasing.MSAA', 'MSAA'),
+        },
       ],
       soundsSurfaceOptions: [
-        { value: 'felt', label: 'felt' },
-        { value: 'metal', label: 'metal' },
-        { value: 'wood_table', label: 'wood_table' },
-        { value: 'wood_tray', label: 'wood_tray' },
+        {
+          value: 'felt',
+          label: localizeOrFallback('DICETOWER.Settings.soundsSurface.Felt', 'Felt'),
+        },
+        {
+          value: 'metal',
+          label: localizeOrFallback('DICETOWER.Settings.soundsSurface.Metal', 'Metal'),
+        },
+        {
+          value: 'wood_table',
+          label: localizeOrFallback('DICETOWER.Settings.soundsSurface.WoodTable', 'Wood Table'),
+        },
+        {
+          value: 'wood_tray',
+          label: localizeOrFallback('DICETOWER.Settings.soundsSurface.WoodTray', 'Wood Tray'),
+        },
       ],
       canvasZIndexOptions: [
-        { value: 'over', label: 'over' },
-        { value: 'under', label: 'under' },
+        {
+          value: 'over',
+          label: localizeOrFallback('DICETOWER.Settings.canvasZIndex.Over', 'Over'),
+        },
+        {
+          value: 'under',
+          label: localizeOrFallback('DICETOWER.Settings.canvasZIndex.Under', 'Under'),
+        },
       ],
       throwingForceOptions: [
-        { value: 'weak', label: 'weak' },
-        { value: 'medium', label: 'medium' },
-        { value: 'strong', label: 'strong' },
+        {
+          value: 'weak',
+          label: localizeOrFallback('DICETOWER.Settings.throwingForce.Weak', 'Weak'),
+        },
+        {
+          value: 'medium',
+          label: localizeOrFallback('DICETOWER.Settings.throwingForce.Medium', 'Medium'),
+        },
+        {
+          value: 'strong',
+          label: localizeOrFallback('DICETOWER.Settings.throwingForce.Strong', 'Strong'),
+        },
       ],
       worldSpeedOptions: [
-        { value: '0', label: 'player' },
-        { value: '1', label: '1x' },
-        { value: '2', label: '2x' },
-        { value: '3', label: '3x' },
+        {
+          value: '0',
+          label: localizeOrFallback('DICETOWER.Settings.globalAnimationSpeed.Player', 'Player Speed'),
+        },
+        {
+          value: '1',
+          label: localizeOrFallback('DICETOWER.Settings.globalAnimationSpeed.Normal', 'Normal'),
+        },
+        {
+          value: '2',
+          label: localizeOrFallback('DICETOWER.Settings.globalAnimationSpeed.Fast', 'Fast'),
+        },
+        {
+          value: '3',
+          label: localizeOrFallback('DICETOWER.Settings.globalAnimationSpeed.VeryFast', 'Very Fast'),
+        },
       ],
       ghostModeOptions: [
-        { value: '0', label: 'disabled' },
-        { value: '1', label: 'all users' },
-        { value: '2', label: 'owner only' },
+        {
+          value: '0',
+          label: localizeOrFallback('DICETOWER.Settings.showGhostDice.Disabled', 'Disabled'),
+        },
+        {
+          value: '1',
+          label: localizeOrFallback('DICETOWER.Settings.showGhostDice.Enabled', 'Enabled'),
+        },
+        {
+          value: '2',
+          label: localizeOrFallback('DICETOWER.Settings.showGhostDice.OwnerOnly', 'Owner Only'),
+        },
       ],
       sfxModeOptions: Object.entries(sfxModes).map(([value, label]) => ({ value, label })),
       previewFormula: '1d20',
@@ -478,7 +572,13 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
   private async previewFromForm(root: HTMLElement): Promise<void> {
     const runtime = game.dice3d as unknown as RuntimeDice3DLike | undefined;
     if (!runtime || typeof runtime.showForRoll !== 'function') {
-      notify('warn', 'Dice Tower runtime is not ready yet.');
+      notify(
+        'warn',
+        localizeOrFallback(
+          'DICETOWER.Notifications.RuntimeNotReady',
+          'Dice Tower runtime is not ready yet.',
+        ),
+      );
       return;
     }
 
@@ -494,7 +594,13 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
     try {
       const roll = await createRollFromFormula(formula);
       if (!roll || !Array.isArray(roll.dice) || roll.dice.length === 0) {
-        notify('warn', 'Preview formula did not produce any dice terms.');
+        notify(
+          'warn',
+          localizeOrFallback(
+            'DICETOWER.Notifications.PreviewNoDice',
+            'Preview formula did not produce any dice terms.',
+          ),
+        );
         return;
       }
 
@@ -507,7 +613,13 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
       });
     } catch (error) {
       console.error(`${MODULE_ID} | Failed to preview roll.`, error);
-      notify('error', 'Failed to preview roll. Check the formula and console for details.');
+      notify(
+        'error',
+        localizeOrFallback(
+          'DICETOWER.Notifications.PreviewFailed',
+          'Failed to preview roll. Check the formula and console for details.',
+        ),
+      );
     }
   }
 
@@ -586,7 +698,10 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
     await setUserSfxFlags(buildSfxListFromExpanded(expanded));
 
     await refreshRuntimeFromSettings();
-    notify('info', 'Dice Tower configuration saved.');
+    notify(
+      'info',
+      localizeOrFallback('DICETOWER.Notifications.ConfigSaved', 'Dice Tower configuration saved.'),
+    );
   }
 }
 
@@ -662,7 +777,10 @@ export class RollableAreaConfigMenuApp extends FormApplication<FormDataObject> {
     if (!enabled) {
       await game.settings.set(MODULE_ID, SETTING_KEYS.client.rollingArea, false);
       await refreshRuntimeFromSettings();
-      notify('info', 'Custom rolling area cleared.');
+      notify(
+        'info',
+        localizeOrFallback('DICETOWER.Notifications.RollingAreaCleared', 'Custom rolling area cleared.'),
+      );
       return;
     }
 
@@ -683,6 +801,9 @@ export class RollableAreaConfigMenuApp extends FormApplication<FormDataObject> {
 
     await game.settings.set(MODULE_ID, SETTING_KEYS.client.rollingArea, rollingArea);
     await refreshRuntimeFromSettings();
-    notify('info', 'Rollable area updated.');
+    notify(
+      'info',
+      localizeOrFallback('DICETOWER.Notifications.RollingAreaUpdated', 'Rollable area updated.'),
+    );
   }
 }

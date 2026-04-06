@@ -10,8 +10,15 @@ import {
 import {
   getWorldFormatVersion,
   normalizeGhostDiceMode,
+  sanitizeRollableArea,
   setWorldFormatVersion,
 } from './register-settings.js';
+import {
+  CLIENT_SETTINGS_SCHEMA,
+  WORLD_SETTINGS_SCHEMA,
+  type ClientSettingKey,
+  type WorldSettingKey,
+} from './settings-schema.js';
 import {
   getUserAppearanceFlags,
   getUserSettingsFlags,
@@ -61,6 +68,56 @@ function readLegacyWorldFormatVersion(): string {
   }
 }
 
+function readLegacySetting(key: string): unknown {
+  try {
+    return game.settings.get(LEGACY_MODULE_ID, key);
+  } catch {
+    return undefined;
+  }
+}
+
+async function importLegacyRegisteredSettings(): Promise<void> {
+  if (game.user.isGM) {
+    for (const key of Object.keys(WORLD_SETTINGS_SCHEMA) as WorldSettingKey[]) {
+      if (key === SETTING_KEYS.world.formatVersion) {
+        continue;
+      }
+
+      const legacyValue = readLegacySetting(key);
+      if (legacyValue === undefined) {
+        continue;
+      }
+
+      const normalized = key === SETTING_KEYS.world.showGhostDice
+        ? normalizeGhostDiceMode(legacyValue)
+        : legacyValue;
+
+      try {
+        await game.settings.set(MODULE_ID, key, normalized);
+      } catch {
+        // Ignore missing registration and continue importing what we can.
+      }
+    }
+  }
+
+  for (const key of Object.keys(CLIENT_SETTINGS_SCHEMA) as ClientSettingKey[]) {
+    const legacyValue = readLegacySetting(key);
+    if (legacyValue === undefined) {
+      continue;
+    }
+
+    const normalized = key === SETTING_KEYS.client.rollingArea
+      ? sanitizeRollableArea(legacyValue)
+      : legacyValue;
+
+    try {
+      await game.settings.set(MODULE_ID, key, normalized);
+    } catch {
+      // Ignore missing registration and continue importing what we can.
+    }
+  }
+}
+
 function getUsers(): User[] {
   const users: User[] = [];
   game.users.forEach((user) => {
@@ -88,6 +145,7 @@ export async function migrateDiceTowerSettings(): Promise<void> {
   }
 
   if (!formatVersion) {
+    await importLegacyRegisteredSettings();
     await setWorldFormatVersion(DATA_FORMAT_VERSION);
     return;
   }
@@ -97,9 +155,12 @@ export async function migrateDiceTowerSettings(): Promise<void> {
   }
 
   if (!game.user.isGM) {
+    await importLegacyRegisteredSettings();
     console.warn('Dice Tower: A GM must complete settings migration first.');
     return;
   }
+
+  await importLegacyRegisteredSettings();
 
   const users = getUsers();
 

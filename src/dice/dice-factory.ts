@@ -101,6 +101,9 @@ const DEFAULT_DICE_SCALES: Record<string, number> = {
   d100: 0.75,
 };
 
+// Keep visual meshes in the same world-space scale used by the physics engine.
+const PHYSICS_WORLD_DIE_SCALE = 50;
+
 const DEFAULT_SHAPES: Record<DieType, DieShape> = {
   d2: 'd2',
   d4: 'd4',
@@ -360,7 +363,11 @@ export class DiceFactory implements IDiceFactory {
     });
 
     const mesh = new Mesh(geometryData.geometry, material);
-    const scale = (preset.scale ?? 1) * this.baseScale * (DEFAULT_DICE_SCALES[dieType] ?? 1);
+    const scale =
+      (preset.scale ?? 1)
+      * this.baseScale
+      * (DEFAULT_DICE_SCALES[dieType] ?? 1)
+      * PHYSICS_WORLD_DIE_SCALE;
     mesh.scale.setScalar(scale);
     mesh.castShadow = true;
     mesh.receiveShadow = false;

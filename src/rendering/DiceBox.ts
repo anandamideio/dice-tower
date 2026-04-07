@@ -551,6 +551,8 @@ export class DiceBox {
   private physicsClient: PhysicsRuntimeClient | null = null;
   private ownsPhysicsClient = false;
   private runtimeReady = false;
+  private physicsUnavailable = false;
+  private physicsFailureNotified = false;
 
   private throwingForce: ThrowingForce = 'medium';
   private speedMultiplier = DEFAULT_SPEED_MULTIPLIER;
@@ -713,6 +715,8 @@ export class DiceBox {
     );
     factory.setMaterialQuality?.(this.config.imageQuality === 'low' ? 'low' : 'high');
 
+    this.physicsUnavailable = false;
+    this.physicsFailureNotified = false;
     await this.ensurePhysicsInitialized();
     this.runtimeReady = true;
   }
@@ -919,12 +923,38 @@ export class DiceBox {
     }
   }
 
-  private async ensurePhysicsInitialized(config: PhysicsConfig = this.getPhysicsConfig()): Promise<void> {
+  private async ensurePhysicsInitialized(config: PhysicsConfig = this.getPhysicsConfig()): Promise<boolean> {
     if (!this.physicsClient) {
       throw new Error('Physics runtime is not configured. Call configureRuntime() first.');
     }
 
-    await this.physicsClient.init(config);
+    if (this.physicsUnavailable) {
+      return false;
+    }
+
+    try {
+      await this.physicsClient.init(config);
+      return true;
+    } catch (error) {
+      this.physicsUnavailable = true;
+
+      if (!this.physicsFailureNotified) {
+        this.physicsFailureNotified = true;
+        console.error('dice-tower | Physics worker initialization failed. 3D dice will be disabled.', error);
+
+        const runtimeUi = ui as unknown as {
+          notifications?: {
+            warn?: (text: string) => void;
+          };
+        };
+
+        runtimeUi.notifications?.warn?.(
+          'Dice Tower could not initialize physics. 3D dice animations are disabled for this session.',
+        );
+      }
+
+      return false;
+    }
   }
 
   private getPhysicsConfig(): PhysicsConfig {
@@ -955,7 +985,10 @@ export class DiceBox {
     const providedThrowParams = options?.throwParams;
     const simulationConfig = providedThrowParams?.config ?? this.getPhysicsConfig();
 
-    await this.ensurePhysicsInitialized(simulationConfig);
+    const physicsReady = await this.ensurePhysicsInitialized(simulationConfig);
+    if (!physicsReady) {
+      return false;
+    }
 
     this.cancelAutoHide();
     this.clearActiveDiceFromScene();
@@ -1702,6 +1735,56 @@ export class DiceBox {
     this.emitAssetLoadProgress({ phase, loaded: safeLoaded, total: safeTotal, percent, item });
   }
 
+  private disposeRendererAssetCaches(): void {
+    const rendererBag = this.renderer as unknown as {
+      envMap?: { dispose?: () => void } | null;
+      textureCache?: {
+        roughnessMaps?: Record<string, { dispose?: () => void }>;
+      };
+    };
+
+    if (rendererBag.textureCache?.roughnessMaps) {
+      for (const texture of Object.values(rendererBag.textureCache.roughnessMaps)) {
+        texture?.dispose?.();
+      }
+      rendererBag.textureCache.roughnessMaps = {};
+    }
+
+    rendererBag.envMap?.dispose?.();
+    rendererBag.envMap = null;
+  }
+
+  private replaceRendererRoughnessMaps(roughnessMaps: Record<string, { dispose?: () => void }>): void {
+    const rendererBag = this.renderer as unknown as {
+      textureCache?: {
+        roughnessMaps?: Record<string, { dispose?: () => void }>;
+      };
+    };
+
+    if (rendererBag.textureCache?.roughnessMaps) {
+      for (const texture of Object.values(rendererBag.textureCache.roughnessMaps)) {
+        texture?.dispose?.();
+      }
+    }
+
+    rendererBag.textureCache = {
+      roughnessMaps,
+    };
+  }
+
+  private replaceRendererEnvironmentMap(envMap: { dispose?: () => void } | null): void {
+    const rendererBag = this.renderer as unknown as {
+      envMap?: { dispose?: () => void } | null;
+    };
+
+    const previous = rendererBag.envMap;
+    if (previous && previous !== envMap) {
+      previous.dispose?.();
+    }
+
+    rendererBag.envMap = envMap;
+  }
+
   private loadHDREnvironment(): Promise<void> {
     return new Promise((resolve) => {
       this.reportAssetLoad('roughness', 0, 5, 'environment');
@@ -1733,10 +1816,7 @@ export class DiceBox {
       for (const tex of Object.values(roughnessMaps)) {
         tex.anisotropy = this.anisotropy;
       }
-      // Expose for DiceFactory (Stage 4)
-      (this.renderer as unknown as Record<string, unknown>).textureCache = {
-        roughnessMaps,
-      };
+      this.replaceRendererRoughnessMaps(roughnessMaps);
 
       new HDRLoader(manager)
         .setDataType(HalfFloatType)
@@ -1747,8 +1827,7 @@ export class DiceBox {
           if (this.scene) {
             this.scene.environment = envMap;
           }
-          // Cache for reuse
-          (this.renderer as unknown as Record<string, unknown>).envMap = envMap;
+          this.replaceRendererEnvironmentMap(envMap);
           hdrTex.dispose();
           pmremGen.dispose();
           const current = this.getAssetLoadProgress();
@@ -1783,7 +1862,7 @@ export class DiceBox {
           if (this.scene) {
             this.scene.environment = cubemap;
           }
-          (this.renderer as unknown as Record<string, unknown>).envMap = cubemap;
+          this.replaceRendererEnvironmentMap(cubemap);
           const current = this.getAssetLoadProgress();
           const total = Math.max(current.total, 6);
           this.reportAssetLoad('complete', total, total, 'cubemap');
@@ -2383,6 +2462,7 @@ export class DiceBox {
     }
 
     // Dispose renderer
+    this.disposeRendererAssetCaches();
     this.renderer.dispose();
     this.renderer.domElement.remove();
 
@@ -2392,6 +2472,8 @@ export class DiceBox {
     this.physicsClient = null;
     this.diceFactory = null;
     this.runtimeReady = false;
+    this.physicsUnavailable = false;
+    this.physicsFailureNotified = false;
     this.bodyCollisionAudio.clear();
     this.soundManager.dispose();
     this.sfxManager.dispose();

@@ -732,7 +732,7 @@ export class PlayAnimationImpact extends TimedDiceSFX implements SFXDisposable {
   static id = 'PlayAnimationImpact';
   static specialEffectName = 'DICESONICE.PlayAnimationImpact';
   static duration = 0.75;
-  static sound = `${SFX_SOUND_BASE}/impact.mp3`;
+  static sound = `${SFX_SOUND_BASE}/hit_glass.mp3`;
 
   protected durationSeconds = PlayAnimationImpact.duration;
 
@@ -913,7 +913,7 @@ export class PlayAnimationParticleSparkles extends TimedParticleSFX {
 export class PlayAnimationParticleSpiral extends TimedParticleSFX {
   static id = 'PlayAnimationParticleSpiral';
   static specialEffectName = 'DICESONICE.PlayAnimationParticleSpiral';
-  static sound = `${SFX_SOUND_BASE}/sparkles.mp3`;
+  static sound = `${SFX_SOUND_BASE}/doublespiral.mp3`;
 
   protected durationSeconds = 1.6;
   protected particleCount = 28;
@@ -949,7 +949,7 @@ export class PlayAnimationParticleSpiral extends TimedParticleSFX {
 export class PlayAnimationParticleVortex extends TimedParticleSFX {
   static id = 'PlayAnimationParticleVortex';
   static specialEffectName = 'DICESONICE.PlayAnimationParticleVortex';
-  static sound = `${SFX_SOUND_BASE}/sparkles.mp3`;
+  static sound = `${SFX_SOUND_BASE}/vortex.mp3`;
 
   protected durationSeconds = 1.5;
   protected particleCount = 32;

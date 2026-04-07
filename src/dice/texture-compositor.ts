@@ -39,21 +39,28 @@ export interface CompositedTextures {
 
 export interface TextureCompositorOptions {
   anisotropy?: number;
+  maxCachedCompositions?: number;
 }
 
 export class TextureCompositor {
   private readonly anisotropy: number;
+  private readonly maxCachedCompositions: number;
   private readonly atlasCache = new Map<string, Promise<AtlasResource | null>>();
   private readonly imageCache = new Map<string, Promise<HTMLImageElement | null>>();
   private readonly textureCache = new Map<string, CompositedTextures>();
 
   constructor(options: TextureCompositorOptions = {}) {
     this.anisotropy = Math.max(1, options.anisotropy ?? 1);
+    this.maxCachedCompositions = Math.max(8, options.maxCachedCompositions ?? 128);
   }
 
   async compose(request: ComposeTextureRequest): Promise<CompositedTextures> {
     const cached = this.textureCache.get(request.cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      this.textureCache.delete(request.cacheKey);
+      this.textureCache.set(request.cacheKey, cached);
+      return cached;
+    }
 
     const { canvas, context } = createCanvas(request.labelAtlas.width, request.labelAtlas.height);
     context.fillStyle = request.baseColor || '#ffffff';
@@ -82,6 +89,7 @@ export class TextureCompositor {
 
     const composed: CompositedTextures = { map, bumpMap };
     this.textureCache.set(request.cacheKey, composed);
+    this.trimTextureCache();
     return composed;
   }
 
@@ -93,6 +101,21 @@ export class TextureCompositor {
     this.textureCache.clear();
     this.atlasCache.clear();
     this.imageCache.clear();
+  }
+
+  private trimTextureCache(): void {
+    while (this.textureCache.size > this.maxCachedCompositions) {
+      const oldestKey = this.textureCache.keys().next().value;
+      if (typeof oldestKey !== 'string') {
+        break;
+      }
+
+      const oldest = this.textureCache.get(oldestKey);
+      this.textureCache.delete(oldestKey);
+
+      oldest?.map.dispose();
+      oldest?.bumpMap?.dispose();
+    }
   }
 
   private async drawTextureLayer(

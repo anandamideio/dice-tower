@@ -39,6 +39,7 @@ const WALL_THICKNESS = 8;
 const WALL_HEIGHT = 220;
 const BARRIER_SCALE = 0.97;
 const DRAG_HANDLE_Z_OFFSET = 150;
+const WORLD_REBUILD_DICE_THRESHOLD = 40;
 
 type StaticSurface = 'desk' | 'barrier';
 
@@ -247,7 +248,11 @@ export class PhysicsEngine {
 
   destroy(): void {
     if (this.world && this.dragJoint) {
-      this.world.removeImpulseJoint(this.dragJoint, true);
+      try {
+        this.world.removeImpulseJoint(this.dragJoint, true);
+      } catch {
+        // Ignore stale joint handles during teardown; world rebuild follows.
+      }
     }
 
     this.dragJoint = null;
@@ -275,7 +280,15 @@ export class PhysicsEngine {
 
   addDice(dice: DiceBodyDef[]): void {
     this.ensureReady();
-    this.removeAllDiceBodies();
+
+    if (dice.length >= WORLD_REBUILD_DICE_THRESHOLD) {
+      this.createWorld();
+      this.ensureReady();
+    } else {
+      this.removeConstraint();
+      this.removeAllDiceBodies();
+    }
+
     this.realtimeFrame = 0;
 
     for (const bodyDef of dice) {
@@ -338,7 +351,11 @@ export class PhysicsEngine {
       return;
     }
 
-    this.world.removeImpulseJoint(this.dragJoint, true);
+    try {
+      this.world.removeImpulseJoint(this.dragJoint, true);
+    } catch {
+      // The joint can already be detached after abrupt body cleanup.
+    }
     this.dragJoint = null;
     this.activeConstraintDieId = null;
   }
@@ -347,8 +364,15 @@ export class PhysicsEngine {
     await this.init(params.config);
     this.ensureReady();
 
-    this.removeAllDiceBodies();
-    this.removeConstraint();
+    if (params.bodies.length >= WORLD_REBUILD_DICE_THRESHOLD) {
+      // Rebuilding the world for dense throws avoids stale broad-phase state
+      // accumulating across repeated high-volume simulations.
+      this.createWorld();
+      this.ensureReady();
+    } else {
+      this.removeConstraint();
+      this.removeAllDiceBodies();
+    }
 
     const rng = new Mulberry32(params.seed);
 

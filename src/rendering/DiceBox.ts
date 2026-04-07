@@ -445,6 +445,24 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function isDiceTowerDebugEnabled(): boolean {
+  const runtimeGlobal = globalThis as unknown as { DICE_TOWER_DEBUG?: unknown };
+  return runtimeGlobal.DICE_TOWER_DEBUG === true;
+}
+
+function debugLog(message: string, payload?: Record<string, unknown>): void {
+  if (!isDiceTowerDebugEnabled()) {
+    return;
+  }
+
+  if (payload) {
+    console.debug(`dice-tower | ${message}`, payload);
+    return;
+  }
+
+  console.debug(`dice-tower | ${message}`);
+}
+
 function normalizeDiceBoxConfig(config: DiceBoxConfig): DiceBoxConfig {
   const hideDelay =
     typeof config.timeBeforeHide === 'number' && Number.isFinite(config.timeBeforeHide)
@@ -504,6 +522,7 @@ export class DiceBox {
 
   // Post-processing
   private renderPipeline: RenderPipeline | null = null;
+  private postProcessingFallbackNotified = false;
   /** Objects highlighted by the outline effect (populated in Stage 5/7). */
   readonly outlineObjects: Object3D[] = [];
   private bloomUniforms: BloomUniforms = { ...DEFAULT_BLOOM };
@@ -637,6 +656,13 @@ export class DiceBox {
     const backendName = backendInfo?.constructor?.name?.toLowerCase() ?? '';
     this.backend = backendName.includes('webgpu') ? 'webgpu' : 'webgl2';
 
+    debugLog('DiceBox renderer initialized', {
+      backend: this.backend,
+      imageQuality: this.config.imageQuality,
+      glow: this.config.glow,
+      antialiasing: this.config.antialiasing,
+    });
+
     // Shadow map settings
     this.renderer.shadowMap.enabled = this.config.shadowQuality !== 'low' || this.config.imageQuality !== 'low';
     this.renderer.shadowMap.type =
@@ -662,9 +688,7 @@ export class DiceBox {
     this.setScene(this.config.dimensions);
 
     // --- Post-processing ---
-    if (this.realisticLighting) {
-      this.setupPostProcessing();
-    }
+    this.reconcilePostProcessing();
   }
 
   get running(): boolean {
@@ -1012,6 +1036,14 @@ export class DiceBox {
       (count, throwGroup) => count + throwGroup.dice.length,
       0,
     );
+
+    debugLog('Starting dice throw playback', {
+      backend: this.backend,
+      postProcessing: this.renderPipeline !== null,
+      groups: effectiveThrows.length,
+      dice: expectedBodyCount,
+      hideAfterRoll: this.hideAfterRoll,
+    });
 
     const providedBodies = providedThrowParams?.bodies;
     const useProvidedBodies =
@@ -2165,6 +2197,30 @@ export class DiceBox {
     this.renderPipeline = pipeline;
   }
 
+  private isPostProcessingSupported(): boolean {
+    return this.backend === 'webgpu';
+  }
+
+  private reconcilePostProcessing(): void {
+    const shouldEnable = this.realisticLighting && this.isPostProcessingSupported();
+    if (shouldEnable) {
+      this.setupPostProcessing();
+      return;
+    }
+
+    if (this.realisticLighting && !this.isPostProcessingSupported() && !this.postProcessingFallbackNotified) {
+      this.postProcessingFallbackNotified = true;
+      console.warn(
+        'dice-tower | WebGPU backend unavailable; disabling post-processing on WebGL2 fallback to keep the dice overlay transparent.',
+      );
+    }
+
+    if (this.renderPipeline) {
+      this.renderPipeline.dispose?.();
+      this.renderPipeline = null;
+    }
+  }
+
   /** Update bloom parameters at runtime (e.g. from settings change). */
   setBloom(cfg: Partial<BloomUniforms>): void {
     Object.assign(this.bloomUniforms, cfg);
@@ -2322,6 +2378,12 @@ export class DiceBox {
     this.isVisible = false;
     const el = this.renderer.domElement;
     el.style.opacity = '0';
+
+    debugLog('Hiding dice overlay', {
+      activeDice: this.activeDice.length,
+      running: this.running,
+    });
+
     this.cancelAutoHide();
     this.stopAnimating();
   }
@@ -2331,6 +2393,12 @@ export class DiceBox {
     const el = this.renderer.domElement;
     el.style.opacity = '1';
     this.isVisible = true;
+
+    debugLog('Showing dice overlay', {
+      backend: this.backend,
+      postProcessing: this.renderPipeline !== null,
+      activeDice: this.activeDice.length,
+    });
   }
 
   // ─── Resize handling ───────────────────────────────────────────────────────
@@ -2390,13 +2458,8 @@ export class DiceBox {
       this.applyZIndex();
     }
 
-    if (ppChanged) {
-      if (this.realisticLighting) {
-        this.setupPostProcessing();
-      } else {
-        this.renderPipeline?.dispose?.();
-        this.renderPipeline = null;
-      }
+    if (qualityChanged || ppChanged) {
+      this.reconcilePostProcessing();
     }
 
     // Always reflow scene layout when scale/autoscale change

@@ -5,6 +5,7 @@ import {
 } from 'three/webgpu';
 
 import type { IDiceFactory, IDiceSystem } from '../api/dice3d.js';
+import { DiceSystem, type DiceMapEntry } from '../api/dice-system.js';
 import { DICE_SHAPE_DEFINITIONS } from '../physics/dice-shape-definitions.js';
 import type {
   Colorset,
@@ -34,6 +35,44 @@ type ProcessMaterialHook = (
   material: Record<string, unknown>,
   appearance: Record<string, unknown>,
 ) => unknown;
+
+type BeforeShaderCompileHook = (shader: unknown, material: unknown) => void;
+
+type MaterialWithHooks = Material & {
+  onBeforeCompile?: (shader: unknown, renderer?: unknown) => void;
+  userData?: Record<string, unknown>;
+};
+
+function normalizeSystemMode(mode: string | boolean | undefined): string {
+  if (typeof mode === 'boolean') {
+    return mode ? 'preferred' : 'default';
+  }
+
+  return mode ?? 'default';
+}
+
+function looksLikeDiceSystemInstance(system: unknown): system is IDiceSystem {
+  if (!system || typeof system !== 'object') {
+    return false;
+  }
+
+  const candidate = system as {
+    constructor?: { name?: string };
+    processMaterial?: unknown;
+    beforeShaderCompile?: unknown;
+    loadSettings?: unknown;
+  };
+
+  if (candidate.constructor?.name === 'DiceSystem') {
+    return true;
+  }
+
+  return (
+    typeof candidate.processMaterial === 'function'
+    || typeof candidate.beforeShaderCompile === 'function'
+    || typeof candidate.loadSettings === 'function'
+  );
+}
 
 const DEFAULT_APPEARANCE: DiceAppearance = {
   labelColor: '#ffffff',
@@ -142,19 +181,40 @@ export class DiceFactory implements IDiceFactory {
 
     this.registerDefaultTextures();
     this.registerDefaultColorsets();
+    this.registerDefaultSystems();
     this.registerDefaultPresets();
   }
 
-  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode = 'default'): void {
-    const normalized: IDiceSystem = {
-      id: system.id,
-      name: system.name,
-      mode,
-      group: system.group ?? null,
-    };
-    this.systems.set(normalized.id, normalized);
+  addSystem(
+    system: IDiceSystem | { id: string; name: string; group?: string },
+    mode: string | boolean = 'default',
+  ): void {
+    const resolvedMode = normalizeSystemMode(mode);
 
-    if (mode === 'preferred') {
+    const normalized: IDiceSystem = looksLikeDiceSystemInstance(system)
+      ? system
+      : new DiceSystem(system.id, system.name, resolvedMode, system.group ?? null);
+
+    const mutableSystem = normalized as {
+      mode?: string;
+      group?: string | null;
+      loadSettings?: () => void;
+    };
+
+    const effectiveMode = typeof mutableSystem.mode === 'string' ? mutableSystem.mode : resolvedMode;
+    mutableSystem.mode = effectiveMode;
+    mutableSystem.group = mutableSystem.group ?? normalized.group ?? null;
+
+    this.systems.set(normalized.id, normalized);
+    mutableSystem.loadSettings?.();
+
+    for (const preset of this.presets.values()) {
+      if (preset.system === normalized.id) {
+        this.attachPresetToSystem(preset);
+      }
+    }
+
+    if (effectiveMode !== 'default' && this.preferredSystem === 'standard') {
       this.preferredSystem = normalized.id;
     }
   }
@@ -173,6 +233,7 @@ export class DiceFactory implements IDiceFactory {
     };
 
     this.presets.set(dice.type, normalized);
+    this.attachPresetToSystem(normalized);
   }
 
   addColorset(colorset: Partial<Colorset> & { name: string }, mode = 'default'): void {
@@ -342,6 +403,10 @@ export class DiceFactory implements IDiceFactory {
     }
   }
 
+  private registerDefaultSystems(): void {
+    this.addSystem(new DiceSystem('standard', 'Standard'));
+  }
+
   private registerDefaultPresets(): void {
     for (const dieType of DEFAULT_TYPES) {
       this.addDicePreset(createDefaultPreset(dieType));
@@ -355,6 +420,26 @@ export class DiceFactory implements IDiceFactory {
     const fallback = createDefaultPreset(dieType);
     this.presets.set(dieType, fallback);
     return fallback;
+  }
+
+  private attachPresetToSystem(preset: DicePresetData): void {
+    const system = this.systems.get(preset.system) ?? this.systems.get('standard');
+    if (!system) {
+      return;
+    }
+
+    const diceMap = (system as { dice?: unknown }).dice;
+    if (!(diceMap instanceof Map)) {
+      return;
+    }
+
+    const diceEntry: DiceMapEntry = {
+      shape: preset.shape ?? DEFAULT_SHAPES[preset.type] ?? 'd6',
+      values: [...preset.values],
+      diceSystem: system as unknown as DiceSystem,
+    };
+
+    (diceMap as Map<string, DiceMapEntry>).set(preset.type, diceEntry);
   }
 
   private resolveRoughnessMap(material: MaterialType): Texture | null {
@@ -395,7 +480,9 @@ export class DiceFactory implements IDiceFactory {
 
     const cached = this.materialCache.get(materialCacheKey);
     if (cached) {
-      return this.applySystemMaterialHooks(args.dieType, cached, args.appearance);
+      const hooked = this.applySystemMaterialHooks(args.dieType, cached, args.appearance);
+      Hooks.callAll('diceSoNiceOnMaterialReady', hooked, materialCacheKey);
+      return hooked;
     }
 
     const material = createDiceMaterial({
@@ -411,7 +498,9 @@ export class DiceFactory implements IDiceFactory {
     });
 
     this.materialCache.set(materialCacheKey, material);
-    return this.applySystemMaterialHooks(args.dieType, material, args.appearance);
+    const hooked = this.applySystemMaterialHooks(args.dieType, material, args.appearance);
+    Hooks.callAll('diceSoNiceOnMaterialReady', hooked, materialCacheKey);
+    return hooked;
   }
 
   private applySystemMaterialHooks(
@@ -420,24 +509,45 @@ export class DiceFactory implements IDiceFactory {
     appearance: ResolvedDiceAppearance,
   ): Material {
     const system = this.systems.get(appearance.system);
+    if (!system) {
+      return baseMaterial;
+    }
+
     const maybeProcessMaterial =
       (system as { processMaterial?: ProcessMaterialHook } | undefined)?.processMaterial;
-    if (typeof maybeProcessMaterial !== 'function') {
+    const maybeBeforeShaderCompile =
+      (system as { beforeShaderCompile?: BeforeShaderCompileHook } | undefined)?.beforeShaderCompile;
+
+    if (typeof maybeProcessMaterial !== 'function' && typeof maybeBeforeShaderCompile !== 'function') {
       return baseMaterial;
     }
 
     const clone = baseMaterial.clone();
-    const processed = maybeProcessMaterial(
-      dieType,
-      clone as unknown as Record<string, unknown>,
-      appearance as unknown as Record<string, unknown>,
-    );
+    let resolved: Material = clone;
 
-    if (!processed || typeof processed !== 'object') {
-      return clone;
+    if (typeof maybeProcessMaterial === 'function') {
+      const processed = maybeProcessMaterial(
+        dieType,
+        clone as unknown as Record<string, unknown>,
+        appearance as unknown as Record<string, unknown>,
+      );
+
+      if (processed && typeof processed === 'object') {
+        resolved = processed as Material;
+      }
     }
 
-    return processed as Material;
+    if (typeof maybeBeforeShaderCompile === 'function') {
+      const hookTarget = resolved as MaterialWithHooks;
+      const previous = hookTarget.onBeforeCompile;
+      hookTarget.onBeforeCompile = (shader: unknown, renderer?: unknown) => {
+        previous?.call(hookTarget, shader, renderer);
+        Hooks.callAll('diceSoNiceShaderOnBeforeCompile', shader, hookTarget);
+        maybeBeforeShaderCompile(shader, hookTarget);
+      };
+    }
+
+    return resolved;
   }
 
   private clearMaterialCache(): void {

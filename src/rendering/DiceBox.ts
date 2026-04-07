@@ -16,7 +16,7 @@
 
 import {
   ACESFilmicToneMapping,
-  Clock,
+  Timer,
   Color,
   CubeTextureLoader,
   DirectionalLight,
@@ -47,7 +47,7 @@ import { emissive, mrt, output, pass, uniform } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { outline } from 'three/addons/tsl/display/OutlineNode.js';
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
 import type {
   DisplayMetrics,
@@ -496,7 +496,7 @@ export class DiceBox {
   // Animation loop
   private animFrameId: number | null = null;
   private hideTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  readonly clock = new Clock();
+  readonly clock = new Timer();
 
   // Interaction
   readonly raycaster = new Raycaster();
@@ -1600,7 +1600,7 @@ export class DiceBox {
         roughnessMaps,
       };
 
-      new RGBELoader(manager)
+      new HDRLoader(manager)
         .setDataType(HalfFloatType)
         .setPath('modules/dice-tower/assets/textures/equirectangular/')
         .load('blouberg_sunrise_2_1k.hdr', (hdrTex) => {
@@ -2027,6 +2027,7 @@ export class DiceBox {
   startAnimating(onFrame?: (context: RenderFrameContext) => void): void {
     if (this.animFrameId !== null) return;
 
+    this.clock.reset();
     this.lastFrameTimeMs = null;
     this.fixedStepAccumulator = 0;
     this.frameCount = 0;
@@ -2048,11 +2049,12 @@ export class DiceBox {
         fixedSteps += 1;
       }
 
+      this.clock.update(timeMs);
       this.frameCount += 1;
 
       onFrame?.({
         deltaSeconds,
-        elapsedSeconds: this.clock.getElapsedTime(),
+        elapsedSeconds: this.clock.getElapsed(),
         fixedStepSeconds: this.fixedStepSeconds,
         fixedSteps,
         interpolationAlpha: this.fixedStepAccumulator / this.fixedStepSeconds,

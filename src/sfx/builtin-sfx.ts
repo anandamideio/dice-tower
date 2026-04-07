@@ -1,7 +1,6 @@
 import {
   AdditiveBlending,
   CanvasTexture,
-  Clock,
   Color,
   DoubleSide,
   Group,
@@ -13,6 +12,7 @@ import {
   Scene,
   Sprite,
   SpriteMaterial,
+  Timer,
   Vector3,
 } from 'three/webgpu';
 
@@ -244,26 +244,33 @@ function getWorldPositionAndQuaternion(meshRef: DiceMeshRef): { position: Vector
 }
 
 abstract class TimedDiceSFX extends DiceSFX implements SFXRenderable {
-  protected readonly clock = new Clock();
+  protected readonly clock = new Timer();
   protected started = false;
 
   protected abstract durationSeconds: number;
+
+  protected updateTimer(): void {
+    if (!this.started) {
+      return;
+    }
+    this.clock.update();
+  }
 
   protected get progress(): number {
     if (!this.started) {
       return 0;
     }
-    return Math.min(1, this.clock.getElapsedTime() / this.durationSeconds);
+    return Math.min(1, this.clock.getElapsed() / this.durationSeconds);
   }
 
   protected startTimer(): void {
-    this.clock.start();
+    this.clock.reset();
     this.started = true;
     this.renderReady = true;
   }
 
   protected isExpired(): boolean {
-    return this.started && this.clock.getElapsedTime() >= this.durationSeconds;
+    return this.started && this.clock.getElapsed() >= this.durationSeconds;
   }
 
   abstract render(deltaSeconds?: number): void;
@@ -305,6 +312,8 @@ abstract class TimedParticleSFX extends TimedDiceSFX implements SFXDisposable {
     if (!this.renderReady) {
       return;
     }
+
+    this.updateTimer();
 
     const progress = this.progress;
     const opacity = Math.max(0, 1 - progress);
@@ -422,6 +431,8 @@ abstract class TimedConfettiSFX extends TimedDiceSFX implements SFXDisposable {
     if (!this.renderReady) {
       return;
     }
+
+    this.updateTimer();
 
     const opacity = Math.max(0, 1 - this.progress);
 
@@ -549,6 +560,8 @@ export class PlayAnimationBright extends TimedDiceSFX implements SFXDisposable {
       return;
     }
 
+    this.updateTimer();
+
     if (Array.isArray(this.targetMesh.material) || !supportsEmissive(this.targetMesh.material)) {
       this.destroy();
       return;
@@ -626,6 +639,8 @@ export class PlayAnimationDark extends TimedDiceSFX implements SFXDisposable {
       return;
     }
 
+    this.updateTimer();
+
     if (Array.isArray(this.targetMesh.material) || !supportsColor(this.targetMesh.material)) {
       this.destroy();
       return;
@@ -689,6 +704,8 @@ export class PlayAnimationOutline extends TimedDiceSFX {
       return;
     }
 
+    this.updateTimer();
+
     if (this.isExpired()) {
       this.destroy();
     }
@@ -749,6 +766,8 @@ export class PlayAnimationImpact extends TimedDiceSFX implements SFXDisposable {
     if (!this.renderReady || !this.sprite || !(this.sprite.material instanceof SpriteMaterial)) {
       return;
     }
+
+    this.updateTimer();
 
     const progress = this.progress;
     const size = 0.05 + progress * 0.6;
@@ -828,6 +847,8 @@ export class PlayAnimationThrow extends TimedDiceSFX implements SFXDisposable {
     if (!this.renderReady || !this.trail || !this.basePosition) {
       return;
     }
+
+    this.updateTimer();
 
     const progress = this.progress;
     this.trail.position.copy(this.basePosition);
@@ -946,7 +967,9 @@ export class PlayAnimationParticleVortex extends TimedParticleSFX {
       return;
     }
 
-    const elapsed = this.clock.getElapsedTime();
+    this.updateTimer();
+
+    const elapsed = this.clock.getElapsed();
     const twist = elapsed * 7;
 
     for (let index = 0; index < this.particles.length; index += 1) {

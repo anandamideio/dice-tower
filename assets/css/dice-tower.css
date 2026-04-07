@@ -1,5 +1,15 @@
+@font-face {
+  font-family: 'FoundryVTT';
+  src: url('../fonts/foundryvtt.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   --dice-tower-z-index: 100;
+  --dice-tower-panel-border: rgba(255, 255, 255, 0.12);
+  --dice-tower-panel-bg: rgba(0, 0, 0, 0.2);
 }
 
 #dice-tower-canvas {
@@ -16,6 +26,16 @@
   gap: 0.8rem;
 }
 
+.dice-tower-config-app,
+.dice-tower-rollable-area-app {
+  font-family: FoundryVTT, Signika, sans-serif;
+}
+
+.dice-tower-config-app .window-content,
+.dice-tower-rollable-area-app .window-content {
+  overflow: auto;
+}
+
 .dice-tower-config__toolbar {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -29,8 +49,9 @@
 }
 
 .dice-tower-config__panel {
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--dice-tower-panel-border);
   border-radius: 6px;
+  background: var(--dice-tower-panel-bg);
   padding: 0.75rem;
   display: grid;
   gap: 0.6rem;
@@ -58,6 +79,7 @@
 .dice-tower-config__table {
   display: grid;
   gap: 0.3rem;
+  overflow-x: auto;
 }
 
 .dice-tower-config__row {
@@ -81,6 +103,10 @@
 
 .dice-tower-config__row > span {
   min-width: 0;
+}
+
+.dice-tower-config__row input[type='checkbox'] {
+  justify-self: start;
 }
 
 .dice-tower-config__row input,
@@ -107,4 +133,25 @@
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.5rem;
+}
+
+@media (max-width: 900px) {
+  .dice-tower-config__toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .dice-tower-config__table--appearance .dice-tower-config__row,
+  .dice-tower-config__table--sfx .dice-tower-config__row {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    padding-bottom: 0.35rem;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
+  }
+
+  .dice-tower-config__row--header {
+    display: none;
+  }
+
+  .dice-tower-rollable-area__actions {
+    grid-template-columns: 1fr;
+  }
 }

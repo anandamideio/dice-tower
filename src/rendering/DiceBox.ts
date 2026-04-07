@@ -621,6 +621,7 @@ export class DiceBox {
   private interactionDragging = false;
   private interactionDraggedDieId: string | null = null;
   private interactionRealtimePending = false;
+  private interactionRealtimeTask: Promise<void> | null = null;
   private interactionOffset = new Vector3();
   private reusablePosition = new Vector3();
   private reusableQuaternion = new Quaternion();
@@ -1073,6 +1074,15 @@ export class DiceBox {
     console.error('dice-tower | Physics simulation failed while physics is unavailable.', error);
   }
 
+  private async waitForRealtimeStepCompletion(): Promise<void> {
+    const pendingStep = this.interactionRealtimeTask;
+    if (!pendingStep) {
+      return;
+    }
+
+    await pendingStep;
+  }
+
   private async runThrow(notation: DiceNotationData, options?: DiceBoxAddOptions): Promise<boolean> {
     if (!this.runtimeReady) {
       throw new Error('DiceBox runtime is not ready. Call configureRuntime() first.');
@@ -1091,6 +1101,8 @@ export class DiceBox {
 
     const providedThrowParams = options?.throwParams;
     const simulationConfig = providedThrowParams?.config ?? this.getPhysicsConfig();
+
+    await this.waitForRealtimeStepCompletion();
 
     const physicsReady = await this.ensurePhysicsInitialized(simulationConfig);
     if (!physicsReady) {
@@ -1573,7 +1585,7 @@ export class DiceBox {
     } else if (this.allowInteractivity && this.physicsClient && !this.processingQueue && !this.physicsUnavailable) {
       if (this.interactionDragging || !this.interactionRealtimePending) {
         this.interactionRealtimePending = true;
-        void this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
+        const stepTask = this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
           .then((result) => {
             this.applyRealtimeStep(result);
           })
@@ -1585,7 +1597,13 @@ export class DiceBox {
           })
           .finally(() => {
             this.interactionRealtimePending = false;
+            if (this.interactionRealtimeTask === stepTask) {
+              this.interactionRealtimeTask = null;
+            }
           });
+
+        this.interactionRealtimeTask = stepTask;
+        void stepTask;
       }
     }
 

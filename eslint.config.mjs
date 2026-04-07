@@ -10,7 +10,7 @@ const typeCheckedConfig = ts.configs.recommendedTypeChecked.map((config) => ({
 
 export default defineConfig(
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: ['dist/**', 'node_modules/**', 'assets/**'],
   },
   eslint.configs.recommended,
   ...typeCheckedConfig,

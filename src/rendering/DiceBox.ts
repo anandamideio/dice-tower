@@ -1620,7 +1620,7 @@ export class DiceBox {
     }
 
     try {
-      fire(eventType, event);
+      fire.call(system, eventType, event);
     } catch (error) {
       console.warn(`DiceBox system event ${eventType} failed for ${die.systemId}.`, error);
     }

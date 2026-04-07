@@ -30,6 +30,9 @@ export const SETTING_FORMATTING = {
   HTML: 'html',
 } as const;
 
+// Keep legacy typo alias for extension compatibility.
+export const SETTING_FORMATING = SETTING_FORMATTING;
+
 /** A setting definition stored on a DiceSystem. */
 export interface DiceSystemSetting {
   type: string;
@@ -62,6 +65,17 @@ export type BeforeShaderCompileCallback = (
   diceType: string,
   appearance: Record<string, unknown>,
 ) => void;
+
+interface ShaderLike {
+  fragmentShader?: string;
+  vertexShader?: string;
+}
+
+interface MaterialLike {
+  userData?: Record<string, unknown>;
+  customProgramCacheKey?: () => number;
+  needsUpdate?: boolean;
+}
 
 function readUserFlagSafe<T>(user: User, scope: string, key: string): T | undefined {
   try {
@@ -97,6 +111,7 @@ export class DiceSystem {
   static readonly SETTING_SCOPE = SETTING_SCOPE;
   static readonly SETTING_TYPE = SETTING_TYPE;
   static readonly SETTING_FORMATTING = SETTING_FORMATTING;
+  static readonly SETTING_FORMATING = SETTING_FORMATING;
 
   static readonly DICE_EVENT_TYPE = {
     SPAWN: 0 as const,
@@ -104,6 +119,16 @@ export class DiceSystem {
     RESULT: 2 as const,
     COLLIDE: 3 as const,
     DESPAWN: 4 as const,
+  };
+
+  static readonly generateHash = (value: string): number => {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      hash = ((hash << 5) - hash) + code;
+      hash |= 0;
+    }
+    return hash;
   };
 
   private _id: string;
@@ -151,6 +176,10 @@ export class DiceSystem {
   // ── Event system ──
 
   on(eventType: DiceEventType, listener: DiceEventListener): void {
+    if (!Object.values(DiceSystem.DICE_EVENT_TYPE).includes(eventType as never)) {
+      throw new Error(`[DiceSystem.on] Invalid dice event type: ${String(eventType)}`);
+    }
+
     if (!this._listeners.has(eventType)) {
       this._listeners.set(eventType, []);
     }
@@ -165,6 +194,10 @@ export class DiceSystem {
   }
 
   fire(eventType: DiceEventType, event: unknown): void {
+    if (!Object.values(DiceSystem.DICE_EVENT_TYPE).includes(eventType as never)) {
+      throw new Error(`[DiceSystem.fire] Invalid dice event type: ${String(eventType)}`);
+    }
+
     const list = this._listeners.get(eventType);
     if (!list) return;
     for (const listener of list) {
@@ -253,12 +286,52 @@ export class DiceSystem {
       for (const callback of this._registeredProcessMaterialCallbacks) {
         callback(diceType, material, appearance);
       }
-      (material as Record<string, Record<string, unknown>>).userData ??= {};
-      (material as Record<string, Record<string, unknown>>).userData.diceType = diceType as unknown as Record<string, unknown>;
-      (material as Record<string, Record<string, unknown>>).userData.system = this.id as unknown as Record<string, unknown>;
-      (material as Record<string, Record<string, unknown>>).userData.appearance = appearance;
+
+      const materialUserData = (material as { userData?: Record<string, unknown> }).userData ?? {};
+      materialUserData.diceType = diceType;
+      materialUserData.system = this.id;
+      materialUserData.appearance = appearance;
+      (material as { userData?: Record<string, unknown> }).userData = materialUserData;
     }
     return material;
+  }
+
+  beforeShaderCompile(shader: unknown, material: unknown): void {
+    const shaderLike = shader as ShaderLike;
+    const materialLike = material as MaterialLike;
+    const userData = materialLike.userData ?? {};
+    const diceType = typeof userData.diceType === 'string' ? userData.diceType : '';
+    const appearance =
+      userData.appearance && typeof userData.appearance === 'object'
+        ? (userData.appearance as Record<string, unknown>)
+        : {};
+
+    const initialFragment = typeof shaderLike.fragmentShader === 'string'
+      ? shaderLike.fragmentShader
+      : '';
+    const initialVertex = typeof shaderLike.vertexShader === 'string'
+      ? shaderLike.vertexShader
+      : '';
+
+    for (const callback of this._registeredBeforeShaderCompileCallbacks) {
+      callback(shader, material, diceType, appearance);
+    }
+
+    const finalFragment = typeof shaderLike.fragmentShader === 'string'
+      ? shaderLike.fragmentShader
+      : '';
+    const finalVertex = typeof shaderLike.vertexShader === 'string'
+      ? shaderLike.vertexShader
+      : '';
+
+    const shaderCacheKey = DiceSystem.generateHash(finalFragment + finalVertex);
+    userData.shaderCacheKey = shaderCacheKey;
+    materialLike.userData = userData;
+
+    if (initialFragment !== finalFragment || initialVertex !== finalVertex) {
+      materialLike.customProgramCacheKey = () => shaderCacheKey;
+      materialLike.needsUpdate = true;
+    }
   }
 
   // ── Setting builder methods ──

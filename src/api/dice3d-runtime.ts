@@ -1,9 +1,27 @@
-import { mergeQueuedRollCommands, parseRollToNotation, DiceFactory } from '../dice/index.js';
+import {
+  mergeQueuedRollCommands,
+  parseRollToNotation,
+  DiceFactory,
+  CORE_COLORSETS,
+  TEXTURE_LIST,
+} from '../dice/index.js';
 import { DiceBox, type DiceBoxConfig } from '../rendering/index.js';
 import type { Colorset, TextureDefinition } from '../types/appearance.js';
-import type { DiceNotationData, DicePresetData } from '../types/dice.js';
+import type { DiceNotationData, DicePresetData, SFXLine } from '../types/dice.js';
+import type {
+  CompressedThrowParams,
+  ShowMessage,
+  SocketMessage,
+  SyncRollMessage,
+  SyncThrowPayload,
+} from '../types/network.js';
+import type { DiceBodyDef, ThrowParams } from '../types/physics.js';
 import type { RollableArea } from '../types/rendering.js';
 import type { ClientSettings, WorldSettings } from '../types/settings.js';
+import {
+  emitDiceTowerSocketMessage,
+  subscribeDiceTowerSocketMessages,
+} from '../network/index.js';
 import {
   emitDiceRollComplete,
   emitDiceRollStart,
@@ -23,6 +41,15 @@ import type { IDice3D, IDiceBox, IDiceFactory, IDiceSFXClass, IDiceSystem } from
 
 const OVERLAY_ID = `${MODULE_ID}-overlay`;
 const SIMULTANEOUS_ROLL_MERGE_WINDOW_MS = 80;
+const SYNC_ROLL_MIN_INTERVAL_MS = 30;
+
+interface RollPlaybackOptions {
+  broadcast: boolean;
+  whisperTargets: string[] | null;
+  blind: boolean;
+  senderUser: User;
+  throwParams?: ThrowParams;
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -117,6 +144,10 @@ export class Dice3DRuntime implements IDice3D {
   private readonly boxRuntime: DiceBox;
   private readonly hostElement: HTMLElement;
   private resizeListener: (() => void) | null = null;
+  private socketUnsubscribe: (() => void) | null = null;
+  private syncRollQueue: SyncRollMessage[] = [];
+  private syncRollTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSyncRollEmitAt = 0;
   private clientSettings: ClientSettings;
   private worldSettings: WorldSettings;
 
@@ -138,6 +169,15 @@ export class Dice3DRuntime implements IDice3D {
     this.exports = {
       parseRollToNotation,
       mergeQueuedRollCommands,
+      DiceFactory,
+      CORE_COLORSETS,
+      TEXTURE_LIST,
+      Utils: {
+        parseRollToNotation,
+        mergeQueuedRollCommands,
+      },
+      COLORSETS: CORE_COLORSETS,
+      TEXTURELIST: TEXTURE_LIST,
     };
   }
 
@@ -175,6 +215,7 @@ export class Dice3DRuntime implements IDice3D {
     const runtime = new Dice3DRuntime(diceFactory, box, host, clientSettings, worldSettings);
     await runtime.applyRuntimeSettings();
     runtime.attachResizeListener();
+    runtime.attachSocketListener();
 
     return runtime;
   }
@@ -191,6 +232,264 @@ export class Dice3DRuntime implements IDice3D {
     return true;
   }
 
+  private attachSocketListener(): void {
+    this.socketUnsubscribe?.();
+    this.socketUnsubscribe = subscribeDiceTowerSocketMessages((message) => {
+      void this.handleSocketMessage(message);
+    });
+  }
+
+  private async handleSocketMessage(message: SocketMessage): Promise<void> {
+    if (!message || message.user === game.user.id) {
+      return;
+    }
+
+    if (message.type === 'update') {
+      return;
+    }
+
+    await this.refreshSettings();
+    if (!this.canRenderSocketRoll(message)) {
+      return;
+    }
+
+    const sender = game.users.get(message.user) ?? game.user;
+    const messageId = message.messageId ?? `dice-tower-${Date.now().toString(36)}`;
+
+    await this.playNotation(
+      message.notation,
+      messageId,
+      {
+        roll: this.createSyntheticRoll(),
+        user: sender,
+        blind: message.blind,
+      },
+      {
+        broadcast: false,
+        whisperTargets: message.whisperTargets,
+        blind: message.blind,
+        senderUser: sender,
+        throwParams: message.type === 'syncRoll'
+          ? this.expandThrowParams(message.throwParams)
+          : undefined,
+      },
+    );
+  }
+
+  private canRenderSocketRoll(message: ShowMessage | SyncRollMessage): boolean {
+    if (!this.isEnabled()) {
+      return false;
+    }
+
+    if (this.clientSettings.onlyShowOwnDice && message.user !== game.user.id) {
+      return false;
+    }
+
+    if (message.blind && !game.user.isGM && message.user !== game.user.id) {
+      return false;
+    }
+
+    if (Array.isArray(message.whisperTargets) && message.whisperTargets.length > 0) {
+      const targetsLocalUser = message.whisperTargets.includes(game.user.id);
+      if (!targetsLocalUser && !game.user.isGM && message.user !== game.user.id) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private createSyntheticRoll(): Roll {
+    return {
+      dice: [],
+      formula: '',
+      total: undefined,
+      options: {},
+    } as Roll;
+  }
+
+  private normalizeWhisperTargets(targets?: string[] | null): string[] | null {
+    if (!Array.isArray(targets)) {
+      return null;
+    }
+
+    const normalized = targets.filter(
+      (target): target is string => typeof target === 'string' && target.length > 0,
+    );
+
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private buildDsnConfig(user: User): {
+    appearance: ReturnType<typeof getUserAppearanceFlags>;
+    specialEffects: SFXLine[];
+  } {
+    return {
+      appearance: getUserAppearanceFlags(user),
+      specialEffects: getMergedSfxListForUser(user, {
+        viewer: user,
+        includeOthers: false,
+      }),
+    };
+  }
+
+  private roundToPrecision(value: number, precision = 3): number {
+    const factor = 10 ** precision;
+    return Math.round(value * factor) / factor;
+  }
+
+  private compressThrowParams(params: ThrowParams): SyncThrowPayload {
+    let previousStart = 0;
+
+    const compressed: CompressedThrowParams = {
+      kind: 'compressed',
+      seed: params.seed,
+      config: params.config,
+      bodies: params.bodies.map((body, index) => {
+        const startAtIteration = body.startAtIteration ?? 0;
+        const startDelta = index === 0
+          ? startAtIteration
+          : startAtIteration - previousStart;
+        previousStart = startAtIteration;
+
+        return {
+          id: body.id,
+          shape: body.shape,
+          type: body.type,
+          m: this.roundToPrecision(body.mass),
+          i: this.roundToPrecision(body.inertia),
+          p: [
+            this.roundToPrecision(body.position.x),
+            this.roundToPrecision(body.position.y),
+            this.roundToPrecision(body.position.z),
+          ],
+          v: [
+            this.roundToPrecision(body.velocity.x),
+            this.roundToPrecision(body.velocity.y),
+            this.roundToPrecision(body.velocity.z),
+          ],
+          a: [
+            this.roundToPrecision(body.angularVelocity.x),
+            this.roundToPrecision(body.angularVelocity.y),
+            this.roundToPrecision(body.angularVelocity.z),
+          ],
+          r: [
+            this.roundToPrecision(body.rotation.x),
+            this.roundToPrecision(body.rotation.y),
+            this.roundToPrecision(body.rotation.z),
+            this.roundToPrecision(body.rotation.w),
+          ],
+          ...(startDelta !== 0 ? { s: startDelta } : {}),
+          ...(body.secretRoll ? { h: 1 as const } : {}),
+        };
+      }),
+    };
+
+    return JSON.stringify(compressed).length < JSON.stringify(params).length
+      ? compressed
+      : params;
+  }
+
+  private isCompressedThrowParams(payload: SyncThrowPayload): payload is CompressedThrowParams {
+    return (
+      typeof payload === 'object'
+      && payload !== null
+      && 'kind' in payload
+      && payload.kind === 'compressed'
+    );
+  }
+
+  private expandThrowParams(payload: SyncThrowPayload): ThrowParams {
+    if (!this.isCompressedThrowParams(payload)) {
+      return payload;
+    }
+
+    let previousStart = 0;
+
+    const bodies: DiceBodyDef[] = payload.bodies.map((body, index) => {
+      const startAtIteration = index === 0
+        ? (body.s ?? 0)
+        : previousStart + (body.s ?? 0);
+      previousStart = startAtIteration;
+
+      return {
+        id: body.id,
+        shape: body.shape,
+        type: body.type,
+        mass: body.m,
+        inertia: body.i,
+        position: {
+          x: body.p[0],
+          y: body.p[1],
+          z: body.p[2],
+        },
+        velocity: {
+          x: body.v[0],
+          y: body.v[1],
+          z: body.v[2],
+        },
+        angularVelocity: {
+          x: body.a[0],
+          y: body.a[1],
+          z: body.a[2],
+        },
+        rotation: {
+          x: body.r[0],
+          y: body.r[1],
+          z: body.r[2],
+          w: body.r[3],
+        },
+        ...(startAtIteration !== 0 ? { startAtIteration } : {}),
+        ...(body.h === 1 ? { secretRoll: true } : {}),
+      };
+    });
+
+    return {
+      seed: payload.seed,
+      config: payload.config,
+      bodies,
+    };
+  }
+
+  private enqueueSyncRollMessage(payload: SyncRollMessage): void {
+    this.syncRollQueue.push(payload);
+    this.flushSyncRollQueue();
+  }
+
+  private flushSyncRollQueue(): void {
+    if (this.syncRollQueue.length === 0) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.lastSyncRollEmitAt;
+    if (elapsed < SYNC_ROLL_MIN_INTERVAL_MS) {
+      if (this.syncRollTimer !== null) {
+        return;
+      }
+
+      this.syncRollTimer = setTimeout(() => {
+        this.syncRollTimer = null;
+        this.flushSyncRollQueue();
+      }, SYNC_ROLL_MIN_INTERVAL_MS - elapsed);
+      return;
+    }
+
+    const payload = this.syncRollQueue.shift();
+    if (!payload) {
+      return;
+    }
+
+    this.lastSyncRollEmitAt = Date.now();
+    emitDiceTowerSocketMessage(payload);
+
+    if (this.syncRollQueue.length > 0 && this.syncRollTimer === null) {
+      this.syncRollTimer = setTimeout(() => {
+        this.syncRollTimer = null;
+        this.flushSyncRollQueue();
+      }, SYNC_ROLL_MIN_INTERVAL_MS);
+    }
+  }
+
   async showForRoll(
     roll: Roll,
     user?: User,
@@ -201,9 +500,6 @@ export class Dice3DRuntime implements IDice3D {
     speaker?: Record<string, unknown> | null,
     options?: { ghost?: boolean; secret?: boolean },
   ): Promise<boolean> {
-    void synchronize;
-    void users;
-
     await this.refreshSettings();
 
     const rollUser = user ?? game.user;
@@ -253,6 +549,7 @@ export class Dice3DRuntime implements IDice3D {
     }
 
     const resolvedMessageId = messageID ?? `dice-tower-${Date.now().toString(36)}`;
+    const shouldBroadcast = synchronize === true && rollUser.id === game.user.id;
     return this.playNotation(
       notation,
       resolvedMessageId,
@@ -260,6 +557,12 @@ export class Dice3DRuntime implements IDice3D {
         roll,
         user: rollUser,
         blind: secretRoll,
+      },
+      {
+        broadcast: shouldBroadcast,
+        whisperTargets: this.normalizeWhisperTargets(users),
+        blind: secretRoll,
+        senderUser: rollUser,
       },
     );
   }
@@ -280,8 +583,14 @@ export class Dice3DRuntime implements IDice3D {
     const rollUser = chatMessage.user ?? game.user;
     const secretRoll = chatMessage.blind === true;
     const messageId = chatMessage.id ?? `dice-tower-${Date.now().toString(36)}`;
+    const deterministicSync = this.worldSettings.enableDeterministicSync;
+    const shouldBroadcast = deterministicSync && rollUser.id === game.user.id;
 
     try {
+      if (deterministicSync && rollUser.id !== game.user.id) {
+        return;
+      }
+
       if (this.worldSettings.enabledSimultaneousRollForMessage) {
         const queue = rolls
           .map((roll) => {
@@ -303,6 +612,11 @@ export class Dice3DRuntime implements IDice3D {
           roll: rolls[0],
           user: rollUser,
           blind: secretRoll,
+        }, {
+          broadcast: shouldBroadcast,
+          whisperTargets: this.normalizeWhisperTargets(chatMessage.whisper),
+          blind: secretRoll,
+          senderUser: rollUser,
         });
         return;
       }
@@ -311,7 +625,7 @@ export class Dice3DRuntime implements IDice3D {
         await this.showForRoll(
           roll,
           rollUser,
-          false,
+          shouldBroadcast,
           chatMessage.whisper,
           chatMessage.blind,
           messageId,
@@ -365,24 +679,66 @@ export class Dice3DRuntime implements IDice3D {
     notation: DiceNotationData,
     messageId: string,
     context: { roll: Roll; user: User; blind: boolean },
+    playbackOptions?: RollPlaybackOptions,
   ): Promise<boolean> {
     const allowed = emitDiceRollStart(messageId, context);
     if (!allowed) {
       return false;
     }
 
+    let capturedThrowParams: ThrowParams | undefined;
+
     this.refreshCanInteract();
-    const rendered = await this.boxRuntime.add(notation);
+    const rendered = await this.boxRuntime.add(notation, {
+      throwParams: playbackOptions?.throwParams,
+      captureThrowParams: playbackOptions?.broadcast
+        ? (params) => {
+          capturedThrowParams = params;
+        }
+        : undefined,
+    });
     this.refreshCanInteract();
 
     if (rendered) {
       emitDiceRollComplete(messageId);
+
+      if (playbackOptions?.broadcast && playbackOptions.senderUser.id === game.user.id) {
+        const dsnConfig = this.buildDsnConfig(playbackOptions.senderUser);
+
+        if (this.worldSettings.enableDeterministicSync && capturedThrowParams) {
+          const payload: SyncRollMessage = {
+            type: 'syncRoll',
+            user: playbackOptions.senderUser.id,
+            messageId,
+            throwParams: this.compressThrowParams(capturedThrowParams),
+            notation,
+            dsnConfig,
+            whisperTargets: playbackOptions.whisperTargets,
+            blind: playbackOptions.blind,
+          };
+          this.enqueueSyncRollMessage(payload);
+        } else {
+          const payload: ShowMessage = {
+            type: 'show',
+            user: playbackOptions.senderUser.id,
+            messageId,
+            notation,
+            dsnConfig,
+            whisperTargets: playbackOptions.whisperTargets,
+            blind: playbackOptions.blind,
+          };
+          emitDiceTowerSocketMessage(payload);
+        }
+      }
     }
 
     return rendered;
   }
 
-  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string): void {
+  addSystem(
+    system: IDiceSystem | { id: string; name: string; group?: string },
+    mode?: string | boolean,
+  ): void {
     this.diceFactoryRuntime.addSystem(system, mode);
   }
 
@@ -406,6 +762,10 @@ export class Dice3DRuntime implements IDice3D {
 
   addSFXMode(sfxClass: IDiceSFXClass): void {
     this.boxRuntime.addSFXMode(sfxClass);
+  }
+
+  addSFX(sfxClass: IDiceSFXClass): void {
+    this.addSFXMode(sfxClass);
   }
 
   getSFXModes(): Record<string, string> {
@@ -442,6 +802,13 @@ export class Dice3DRuntime implements IDice3D {
   dispose(): void {
     this.resizeListener?.();
     this.resizeListener = null;
+    this.socketUnsubscribe?.();
+    this.socketUnsubscribe = null;
+    if (this.syncRollTimer !== null) {
+      clearTimeout(this.syncRollTimer);
+      this.syncRollTimer = null;
+    }
+    this.syncRollQueue = [];
     this.boxRuntime.dispose();
     this.hostElement.remove();
   }
@@ -474,6 +841,12 @@ export class Dice3DRuntime implements IDice3D {
   }
 
   private async applyRuntimeSettings(): Promise<void> {
+    const queueMergeWindowMs = this.worldSettings.enableDeterministicSync
+      ? 0
+      : this.worldSettings.enabledSimultaneousRolls
+        ? SIMULTANEOUS_ROLL_MERGE_WINDOW_MS
+        : 0;
+
     await this.boxRuntime.configureRuntime({
       diceFactory: this.diceFactoryRuntime,
       throwingForce: this.clientSettings.throwingForce,
@@ -481,9 +854,7 @@ export class Dice3DRuntime implements IDice3D {
       hideAfterRoll: this.clientSettings.hideAfterRoll,
       allowInteractivity: true,
       maxDiceNumber: this.worldSettings.maxDiceNumber,
-      queueMergeWindowMs: this.worldSettings.enabledSimultaneousRolls
-        ? SIMULTANEOUS_ROLL_MERGE_WINDOW_MS
-        : 0,
+      queueMergeWindowMs,
       sounds: this.clientSettings.sounds,
       soundsSurface: this.clientSettings.soundsSurface,
       soundsVolume: this.clientSettings.soundsVolume,

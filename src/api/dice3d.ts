@@ -21,7 +21,7 @@ export interface IDiceFactory {
   /** All registered systems. */
   systems: Map<string, IDiceSystem>;
   /** Add a dice system. */
-  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string): void;
+  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string | boolean): void;
   /** Register a dice preset. */
   addDicePreset(dice: DicePresetData, shape?: string | null): void;
   /** Register a colorset (theme). */
@@ -46,6 +46,15 @@ export interface IDiceSystem {
   readonly name: string;
   readonly mode: string;
   readonly group: string | null;
+  readonly dice?: Map<string, unknown>;
+  loadSettings?(): void;
+  processMaterial?(
+    diceType: string,
+    material: Record<string, unknown>,
+    appearance: Record<string, unknown>,
+  ): unknown;
+  beforeShaderCompile?(shader: unknown, material: unknown): void;
+  fire?(eventType: number, event: unknown): void;
 }
 
 /** DiceSFX class constructor shape expected by addSFXMode. */
@@ -110,7 +119,7 @@ export interface IDice3D {
    * @param system - DiceSystem instance or plain object with {id, name, group?}
    * @param mode   - "default" or "preferred"
    */
-  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string): void;
+  addSystem(system: IDiceSystem | { id: string; name: string; group?: string }, mode?: string | boolean): void;
 
   /**
    * Register a new dice preset.
@@ -146,6 +155,12 @@ export interface IDice3D {
    * @param sfxClass - The SFX class to register
    */
   addSFXMode(sfxClass: IDiceSFXClass): void;
+
+  /**
+   * Legacy alias for addSFXMode used by older extensions.
+   * @param sfxClass - The SFX class to register
+   */
+  addSFX(sfxClass: IDiceSFXClass): void;
 
   /**
    * Get available SFX modes by id -> localized name.

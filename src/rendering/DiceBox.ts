@@ -174,6 +174,12 @@ const DEFAULT_SPEED_MULTIPLIER = 1;
 const DEFAULT_MAX_DICE = 100;
 const DEFAULT_QUEUE_MERGE_WINDOW_MS = 80;
 const FACE_SWAP_BLEND_FRAMES = 10;
+const HIGH_VOLUME_DICE_THRESHOLD = 40;
+const HIGH_VOLUME_DENSITY_BASELINE = 25;
+const MAX_PLANAR_VELOCITY = 3200;
+const MAX_PLANAR_VELOCITY_HIGH_VOLUME = 1800;
+const MAX_ANGULAR_VELOCITY = 35;
+const MAX_ANGULAR_VELOCITY_HIGH_VOLUME = 18;
 
 const DICE_SYSTEM_EVENT_TYPE = {
   SPAWN: 0,
@@ -238,6 +244,19 @@ interface ThrowVectorBasis {
   y: number;
   dist: number;
   boost: number;
+}
+
+function clampMagnitude2D(x: number, y: number, maxMagnitude: number): { x: number; y: number } {
+  const magnitude = Math.hypot(x, y);
+  if (!Number.isFinite(magnitude) || magnitude <= maxMagnitude || magnitude === 0) {
+    return { x, y };
+  }
+
+  const scale = maxMagnitude / magnitude;
+  return {
+    x: x * scale,
+    y: y * scale,
+  };
 }
 
 interface DiceFactoryRuntime {
@@ -1029,6 +1048,31 @@ export class DiceBox {
     }
   }
 
+  private disablePhysicsAfterFatalSimulationError(error: unknown): void {
+    this.physicsUnavailable = true;
+    this.clearActiveDiceFromScene();
+    this.pendingHideAfterSfx = false;
+    this.hide();
+
+    if (!this.physicsFailureNotified) {
+      this.physicsFailureNotified = true;
+      console.error('dice-tower | Physics simulation failed. 3D dice will be disabled.', error);
+
+      const runtimeUi = ui as unknown as {
+        notifications?: {
+          warn?: (text: string) => void;
+        };
+      };
+
+      runtimeUi.notifications?.warn?.(
+        'Dice Tower physics encountered a runtime error. 3D dice animations are disabled for this session.',
+      );
+      return;
+    }
+
+    console.error('dice-tower | Physics simulation failed while physics is unavailable.', error);
+  }
+
   private async runThrow(notation: DiceNotationData, options?: DiceBoxAddOptions): Promise<boolean> {
     if (!this.runtimeReady) {
       throw new Error('DiceBox runtime is not ready. Call configureRuntime() first.');
@@ -1135,6 +1179,8 @@ export class DiceBox {
             die,
             shape,
             throwIndex,
+            throwDieIndex: dieIndex,
+            totalDiceInSimulation: expectedBodyCount,
             basis: basis ?? this.createThrowVectorBasis(rng),
             rng,
             mesh,
@@ -1213,11 +1259,18 @@ export class DiceBox {
     } catch (error) {
       const recoveredClient = await this.recoverPhysicsClientAfterSimulationError(simulationConfig, error);
       if (!recoveredClient) {
-        throw error;
+        this.disablePhysicsAfterFatalSimulationError(error);
+        return false;
       }
 
       physicsClient = recoveredClient;
-      simulation = await physicsClient.simulate(params);
+
+      try {
+        simulation = await physicsClient.simulate(params);
+      } catch (retryError) {
+        this.disablePhysicsAfterFatalSimulationError(retryError);
+        return false;
+      }
     }
 
     this.setupPlayback(simulation);
@@ -1323,6 +1376,8 @@ export class DiceBox {
     die: DieResult;
     shape: DieShape;
     throwIndex: number;
+    throwDieIndex: number;
+    totalDiceInSimulation: number;
     basis: ThrowVectorBasis;
     rng: Mulberry32;
     mesh: Mesh;
@@ -1351,9 +1406,15 @@ export class DiceBox {
     const vnx = vel.x / args.basis.dist;
     const vny = vel.y / args.basis.dist;
 
+    const isHighVolumeRoll = args.totalDiceInSimulation >= HIGH_VOLUME_DICE_THRESHOLD;
+    const densityScale = args.totalDiceInSimulation > HIGH_VOLUME_DENSITY_BASELINE
+      ? Math.sqrt(HIGH_VOLUME_DENSITY_BASELINE / args.totalDiceInSimulation)
+      : 1;
+    const boostedSpeed = args.basis.boost * densityScale;
+
     let velocity: Vec3 = {
-      x: vnx * args.basis.boost,
-      y: vny * args.basis.boost,
+      x: vnx * boostedSpeed,
+      y: vny * boostedSpeed,
       z: -10,
     };
 
@@ -1365,8 +1426,8 @@ export class DiceBox {
 
     if (args.shape === 'd2') {
       velocity = {
-        x: vnx * args.basis.boost * 0.1,
-        y: vny * args.basis.boost * 0.1,
+        x: vnx * boostedSpeed * 0.1,
+        y: vny * boostedSpeed * 0.1,
         z: 3000,
       };
       angularVelocity = {
@@ -1375,6 +1436,20 @@ export class DiceBox {
         z: args.rng.range(-6, 6),
       };
     }
+
+    const maxPlanarVelocity = isHighVolumeRoll
+      ? MAX_PLANAR_VELOCITY_HIGH_VOLUME
+      : MAX_PLANAR_VELOCITY;
+    const clampedPlanarVelocity = clampMagnitude2D(velocity.x, velocity.y, maxPlanarVelocity);
+    velocity.x = clampedPlanarVelocity.x;
+    velocity.y = clampedPlanarVelocity.y;
+
+    const angularClamp = isHighVolumeRoll
+      ? MAX_ANGULAR_VELOCITY_HIGH_VOLUME
+      : MAX_ANGULAR_VELOCITY;
+    angularVelocity.x = clamp(angularVelocity.x, -angularClamp, angularClamp);
+    angularVelocity.y = clamp(angularVelocity.y, -angularClamp, angularClamp);
+    angularVelocity.z = clamp(angularVelocity.z, -angularClamp, angularClamp);
 
     const rotation = randomQuaternion(args.rng);
 
@@ -1409,7 +1484,7 @@ export class DiceBox {
         z: rotation.z,
         w: rotation.w,
       },
-      startAtIteration: args.throwIndex * ROLL_GROUP_STEP,
+      startAtIteration: args.throwIndex * ROLL_GROUP_STEP + (isHighVolumeRoll ? args.throwDieIndex : 0),
       secretRoll: args.die.options.secret === true,
     };
   }
@@ -1495,12 +1570,18 @@ export class DiceBox {
   private handleFrame = (context: RenderFrameContext): void => {
     if (this.playback) {
       this.applyPlaybackFrame(context);
-    } else if (this.allowInteractivity && this.physicsClient) {
+    } else if (this.allowInteractivity && this.physicsClient && !this.processingQueue && !this.physicsUnavailable) {
       if (this.interactionDragging || !this.interactionRealtimePending) {
         this.interactionRealtimePending = true;
         void this.physicsClient.playStep(context.deltaSeconds * this.speedMultiplier)
           .then((result) => {
             this.applyRealtimeStep(result);
+          })
+          .catch(async (error) => {
+            const recoveredClient = await this.recoverPhysicsClientAfterSimulationError(this.getPhysicsConfig(), error);
+            if (!recoveredClient) {
+              this.disablePhysicsAfterFatalSimulationError(error);
+            }
           })
           .finally(() => {
             this.interactionRealtimePending = false;

@@ -136,13 +136,24 @@ function resolveAppearanceForDie(
     return undefined;
   }
 
+  const global = appearance.global;
   const scoped = appearance[dieType];
-  if (scoped && typeof scoped === 'object') {
+
+  const hasGlobal = Boolean(global && typeof global === 'object');
+  const hasScoped = Boolean(scoped && typeof scoped === 'object');
+
+  if (hasGlobal && hasScoped) {
+    return {
+      ...(global as DiceAppearance),
+      ...(scoped as DiceAppearance),
+    };
+  }
+
+  if (hasScoped) {
     return scoped;
   }
 
-  const global = appearance.global;
-  if (global && typeof global === 'object') {
+  if (hasGlobal) {
     return global;
   }
 

@@ -522,7 +522,8 @@ export class DiceFactory implements IDiceFactory {
     let resolved: Material = clone;
 
     if (typeof maybeProcessMaterial === 'function') {
-      const processed = maybeProcessMaterial(
+      const processed = maybeProcessMaterial.call(
+        system,
         dieType,
         clone as unknown as Record<string, unknown>,
         appearance as unknown as Record<string, unknown>,
@@ -539,7 +540,7 @@ export class DiceFactory implements IDiceFactory {
       hookTarget.onBeforeCompile = (shader: unknown, renderer?: unknown) => {
         previous?.call(hookTarget, shader, renderer);
         Hooks.callAll('diceSoNiceShaderOnBeforeCompile', shader, hookTarget);
-        maybeBeforeShaderCompile(shader, hookTarget);
+        maybeBeforeShaderCompile.call(system, shader, hookTarget);
       };
     }
 

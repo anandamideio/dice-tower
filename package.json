@@ -9,7 +9,7 @@
     "build": "pnpm run typecheck && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:perf": "vitest run tests/performance && vitest bench tests/performance",
+    "test:perf": "vitest run tests/performance && vitest bench --run tests/performance",
     "link:foundry": "fish ./scripts/link-foundry.fish",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint . --ext .ts",

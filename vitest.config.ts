@@ -11,6 +11,7 @@ export default defineConfig({
     include: ['tests/**/*.spec.ts'],
     exclude: ['dist/**', 'node_modules/**'],
     fileParallelism: false,
+    setupFiles: ['tests/setup/foundry-globals.ts'],
     benchmark: {
       include: ['tests/**/*.bench.ts'],
       exclude: ['dist/**', 'node_modules/**'],

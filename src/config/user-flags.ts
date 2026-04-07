@@ -211,6 +211,32 @@ export function getMergedSfxListForUser(
   return deduped;
 }
 
+export function getUserSystemSettingsFlags(user: User = game.user): unknown[] {
+  const value = readFlag<unknown>(user, SETTING_KEYS.flags.systemSettingsList);
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return [];
+}
+
+export async function setUserSystemSettingsFlags(
+  list: unknown[],
+  user: User = game.user,
+): Promise<void> {
+  await user.setFlag(MODULE_ID, SETTING_KEYS.flags.systemSettingsList, list);
+}
+
+export function getWelcomeMessageShown(user: User = game.user): boolean {
+  return readFlag<boolean>(user, SETTING_KEYS.flags.welcomeMessageShown) === true;
+}
+
+export async function setWelcomeMessageShown(
+  shown: boolean,
+  user: User = game.user,
+): Promise<void> {
+  await user.setFlag(MODULE_ID, SETTING_KEYS.flags.welcomeMessageShown, shown);
+}
+
 export function getUserSaves(user: User = game.user): Record<string, DiceSaveProfile> {
   const value = readFlag<unknown>(user, SETTING_KEYS.flags.saves);
   if (!value || typeof value !== 'object') {

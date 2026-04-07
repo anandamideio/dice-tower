@@ -40,6 +40,12 @@ declare global {
     getFlag?(scope: string, key: string): unknown;
     /** DSN-internal flag: animation is in progress. */
     _dice3danimating?: boolean;
+    /** DSN-internal flag: original message content hidden during animation. */
+    _dice3dMessageHidden?: boolean;
+    /** DSN-internal: tracks how many rolls were hidden per update cycle. */
+    _dice3dRollsHidden?: number[];
+    /** DSN-internal: count of new rolls added in the current update. */
+    _dice3dCountNewRolls?: number;
   }
 
   /** Chat speaker data attached to a ChatMessage. */

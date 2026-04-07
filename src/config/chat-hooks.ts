@@ -1,5 +1,6 @@
 import { emitDiceMessageProcessed } from './hook-bridge.js';
 import { getWorldSettingsSnapshot } from './register-settings.js';
+import { MODULE_ID } from './constants.js';
 
 interface ChatHookOptions {
   diceTowerCountAddedRoll?: number;
@@ -331,6 +332,149 @@ function onUpdateChatMessage(chatMessage: ChatMessage, options: ChatHookOptions)
   processChatMessageRolls(chatMessage, rolls);
 }
 
+function onRenderChatMessageHTML(chatMessage: ChatMessage, html: HTMLElement): void {
+  const runtime = game.dice3d;
+  if (!runtime) {
+    return;
+  }
+
+  // Allow extensions to disable the message hook temporarily.
+  if ((runtime as unknown as { messageHookDisabled?: boolean }).messageHookDisabled) {
+    return;
+  }
+
+  const worldSettings = getWorldSettingsSnapshot() as unknown as Record<string, unknown>;
+  if (worldSettings.immediatelyDisplayChatMessages === true) {
+    return;
+  }
+
+  if (!chatMessage._dice3danimating) {
+    return;
+  }
+
+  if (chatMessage._dice3dCountNewRolls) {
+    if (!chatMessage._dice3dRollsHidden) {
+      chatMessage._dice3dRollsHidden = [];
+    }
+
+    chatMessage._dice3dRollsHidden.push(chatMessage._dice3dCountNewRolls);
+
+    const sumOfAllHiddenRolls = chatMessage._dice3dRollsHidden.reduce(
+      (a: number, b: number) => a + b,
+      0,
+    );
+
+    const diceRollElements = [...html.querySelectorAll('.dice-roll')];
+    diceRollElements.slice(-sumOfAllHiddenRolls).forEach((el) => el.classList.add('dsn-hide'));
+
+    if (chatMessage._dice3dMessageHidden) {
+      html.classList.add('dsn-hide');
+    }
+  } else {
+    html.classList.add('dsn-hide');
+    chatMessage._dice3dMessageHidden = true;
+  }
+}
+
+function registerChatCommand(): void {
+  Hooks.on('chatCommandsReady', (...args: unknown[]) => {
+    const [commands] = args as [{ register?: (config: Record<string, unknown>) => void }];
+    if (!commands || typeof commands.register !== 'function') {
+      return;
+    }
+
+    commands.register({
+      name: '/dice3d',
+      module: MODULE_ID,
+      aliases: ['/d3d', '/dsn'],
+      description: game.i18n?.localize?.('DICETOWER.ChatCommand.Description') ?? 'Roll 3D dice',
+      icon: "<i class='fas fa-dice-d20'></i>",
+      requiredRole: 'NONE',
+      callback: async (_chat: unknown, parameters: string) => {
+        const runtime = game.dice3d;
+        if (runtime && typeof parameters === 'string' && parameters.trim().length > 0) {
+          const RollCtor = (globalThis as unknown as { Roll?: new (formula: string) => Roll & { evaluate(options?: Record<string, unknown>): Promise<Roll> } }).Roll;
+          if (RollCtor) {
+            const roll = await new RollCtor(parameters).evaluate({ async: true });
+            await runtime.showForRoll(roll, game.user, true);
+          }
+        }
+        return {};
+      },
+      autocompleteCallback: () => {
+        const chatCommands = (game as unknown as { chatCommands?: { createInfoElement?: (text: string) => unknown } }).chatCommands;
+        if (chatCommands?.createInfoElement) {
+          return [chatCommands.createInfoElement(
+            game.i18n?.localize?.('DICETOWER.ChatCommand.CompletionDescription') ?? 'Roll a dice formula with 3D animation',
+          )];
+        }
+        return [];
+      },
+      closeOnComplete: true,
+    });
+  });
+}
+
+function registerHiddenTabHandler(): void {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      return;
+    }
+
+    const runtime = game.dice3d as unknown as {
+      hiddenAnimationQueue?: Array<{
+        timestamp: number;
+        resolve: (displayed: boolean) => void;
+        data: unknown;
+        config: unknown;
+      }>;
+      _showAnimation?: (data: unknown, config: unknown) => Promise<boolean>;
+    } | null;
+
+    if (!runtime?.hiddenAnimationQueue?.length) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const anim of runtime.hiddenAnimationQueue) {
+      if (now - anim.timestamp > 10000) {
+        anim.resolve(false);
+      } else if (typeof runtime._showAnimation === 'function') {
+        runtime._showAnimation(anim.data, anim.config).then((displayed) => {
+          anim.resolve(displayed);
+        });
+      } else {
+        anim.resolve(false);
+      }
+    }
+
+    runtime.hiddenAnimationQueue = [];
+  });
+}
+
+function registerCollapseSidebarHandler(): void {
+  Hooks.on('collapseSidebar', () => {
+    const sidebarContent = document.getElementById('sidebar-content');
+    if (!sidebarContent) {
+      return;
+    }
+
+    sidebarContent.addEventListener(
+      'transitionend',
+      () => {
+        const runtime = game.dice3d as unknown as {
+          box?: { resize?: (w: number, h: number) => void };
+        } | null;
+
+        if (runtime?.box?.resize) {
+          runtime.box.resize(window.innerWidth, window.innerHeight);
+        }
+      },
+      { once: true },
+    );
+  });
+}
+
 export function registerDiceTowerChatHooks(): void {
   if (chatHooksRegistered) {
     return;
@@ -353,4 +497,13 @@ export function registerDiceTowerChatHooks(): void {
     void _updateData;
     onUpdateChatMessage(chatMessage, options);
   });
+
+  Hooks.on('renderChatMessageHTML', (...args: unknown[]) => {
+    const [message, html] = args as [ChatMessage, HTMLElement];
+    onRenderChatMessageHTML(message, html);
+  });
+
+  registerChatCommand();
+  registerHiddenTabHandler();
+  registerCollapseSidebarHandler();
 }

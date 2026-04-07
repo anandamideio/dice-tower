@@ -6,6 +6,7 @@ import {
 
 import type { IDiceFactory, IDiceSystem } from '../api/dice3d.js';
 import { DiceSystem, type DiceMapEntry } from '../api/dice-system.js';
+import { HOOK_NAMES } from '../config/constants.js';
 import { DICE_SHAPE_DEFINITIONS } from '../physics/dice-shape-definitions.js';
 import type {
   Colorset,
@@ -233,6 +234,8 @@ export class DiceFactory implements IDiceFactory {
 
     this.presets.set(dice.type, normalized);
     this.attachPresetToSystem(normalized);
+    Hooks.callAll(HOOK_NAMES.modelLoaded[0], normalized);
+    Hooks.callAll(HOOK_NAMES.modelLoaded[1], normalized);
   }
 
   addColorset(colorset: Partial<Colorset> & { name: string }, mode = 'default'): void {
@@ -484,7 +487,8 @@ export class DiceFactory implements IDiceFactory {
     const cached = this.materialCache.get(materialCacheKey);
     if (cached) {
       const hooked = this.applySystemMaterialHooks(args.dieType, cached, args.appearance);
-      Hooks.callAll('diceSoNiceOnMaterialReady', hooked, materialCacheKey);
+      Hooks.callAll(HOOK_NAMES.onMaterialReady[0], hooked, materialCacheKey);
+      Hooks.callAll(HOOK_NAMES.onMaterialReady[1], hooked, materialCacheKey);
       return hooked;
     }
 
@@ -546,7 +550,8 @@ export class DiceFactory implements IDiceFactory {
       const previous = hookTarget.onBeforeCompile;
       hookTarget.onBeforeCompile = (shader: unknown, renderer?: unknown) => {
         previous?.call(hookTarget, shader, renderer);
-        Hooks.callAll('diceSoNiceShaderOnBeforeCompile', shader, hookTarget);
+        Hooks.callAll(HOOK_NAMES.shaderOnBeforeCompile[0], shader, hookTarget);
+        Hooks.callAll(HOOK_NAMES.shaderOnBeforeCompile[1], shader, hookTarget);
         maybeBeforeShaderCompile.call(system, shader, hookTarget);
       };
     }

@@ -8,7 +8,8 @@ import {
   WORLD_SETTINGS_SCHEMA,
   type SettingSchemaEntry,
 } from './settings-schema.js';
-import { DiceConfigMenuApp, RollableAreaConfigMenuApp } from './menu-apps.js';
+import { DiceConfigSvelteApp } from '../ui/foundry-bridge.js';
+import { RollableAreaConfigMenuApp } from './menu-apps.js';
 
 function localizeOrKey(key: string): string {
   return game.i18n?.localize?.(key) ?? key;
@@ -63,7 +64,7 @@ export function registerDiceTowerSettings(): void {
     hint: localizeOrKey('DICETOWER.Menu.DiceConfig.Hint'),
     icon: 'fas fa-dice-d20',
     restricted: false,
-    type: DiceConfigMenuApp,
+    type: DiceConfigSvelteApp,
   });
 
   game.settings.registerMenu(MODULE_ID, SETTING_KEYS.menus.rollableArea, {

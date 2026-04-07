@@ -108,9 +108,53 @@ export interface IDice3D {
   ): Promise<boolean>;
 
   /**
+   * Show the 3D dice animation from raw notation data.
+   *
+   * This is the lower-level display method used internally and by some extensions.
+   * The `data` object must contain a `throws` array of dice throw groups.
+   *
+   * @param data         - Notation data with a `throws` array
+   * @param user         - The user who made the roll
+   * @param synchronize  - Whether to broadcast to other clients
+   * @param users        - Whisper target user IDs (null = public)
+   * @param blind        - Whether this is a blind/GM-only roll
+   * @returns Resolves true when the animation completes
+   */
+  show(
+    data: { throws: unknown[] } & Record<string, unknown>,
+    user?: User,
+    synchronize?: boolean,
+    users?: string[] | null,
+    blind?: boolean,
+  ): Promise<boolean>;
+
+  /**
+   * Wait for a specific message's 3D animation to complete.
+   *
+   * @param targetMessageId - The ChatMessage ID to wait for
+   * @returns Resolves true when the animation completes or immediately if disabled
+   */
+  waitFor3DAnimationByMessageID(targetMessageId: string): Promise<boolean>;
+
+  /**
    * Render rolls for a chat message (called from the createChatMessage hook).
    */
   renderRolls(chatMessage: ChatMessage, rolls: Roll[]): void;
+
+  /**
+   * Update the DiceBox renderer with new settings.
+   */
+  update(settings: Record<string, unknown>): void;
+
+  /**
+   * Change the default value of the showExtraDice setting.
+   */
+  showExtraDiceByDefault(show?: boolean): void;
+
+  /**
+   * Enable debug rendering mode on the DiceBox.
+   */
+  enableDebugMode(): void;
 
   // ── Extension registration ──
 
@@ -189,4 +233,25 @@ export interface IDice3D {
   canInteract: boolean;
   /** Exported utilities for extensions. */
   exports: Record<string, unknown>;
+
+  // ── Static-style config accessors (Dice So Nice compatibility) ──
+
+  /** Get client settings snapshot for a user (defaults to current user). */
+  CONFIG(user?: User): Record<string, unknown>;
+  /** Get merged client settings + appearance for a user. */
+  ALL_CONFIG(user?: User): Record<string, unknown>;
+  /** Get dice appearance flags for a user. */
+  APPEARANCE(user?: User): Record<string, unknown>;
+  /** Get default appearance for a user (based on user color). */
+  DEFAULT_APPEARANCE(user?: User): Record<string, unknown>;
+  /** Get default client settings. */
+  DEFAULT_OPTIONS: Record<string, unknown>;
+  /** Get merged default settings + appearance for a user. */
+  ALL_DEFAULT_OPTIONS(user?: User): Record<string, unknown>;
+  /** Get SFX list for a user. */
+  SFX(user?: User): unknown[];
+  /** Get system settings list for a user. */
+  SYSTEM_SETTINGS(user?: User): unknown[];
+  /** Get full customization config (settings + appearance + SFX) for a user. */
+  ALL_CUSTOMIZATION(user?: User, dicefactory?: IDiceFactory | null): Record<string, unknown>;
 }

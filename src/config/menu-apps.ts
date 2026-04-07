@@ -725,6 +725,16 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
           worldInput.enableDeterministicSync,
           currentWorld.enableDeterministicSync,
         ),
+        diceCanBeFlipped: parseBoolean(worldInput.diceCanBeFlipped, currentWorld.diceCanBeFlipped),
+        allowInteractivity: parseBoolean(worldInput.allowInteractivity, currentWorld.allowInteractivity),
+        immediatelyDisplayChatMessages: parseBoolean(
+          worldInput.immediatelyDisplayChatMessages,
+          currentWorld.immediatelyDisplayChatMessages,
+        ),
+        forceCharacterOwnerAppearanceForInitiative: parseBoolean(
+          worldInput.forceCharacterOwnerAppearanceForInitiative,
+          currentWorld.forceCharacterOwnerAppearanceForInitiative,
+        ),
       };
 
       for (const key of Object.keys(worldNext) as Array<keyof WorldSettings>) {

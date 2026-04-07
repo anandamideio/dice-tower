@@ -10,8 +10,9 @@
   ],
   "compatibility": {
     "minimum": "13",
-    "verified": "13"
+    "verified": "14"
   },
+  "socket": true,
   "esmodules": ["main.js"],
   "styles": ["assets/css/dice-tower.css"],
   "languages": [

@@ -17,6 +17,10 @@ export const SETTING_KEYS = {
     enabledSimultaneousRolls: 'enabledSimultaneousRolls',
     enabledSimultaneousRollForMessage: 'enabledSimultaneousRollForMessage',
     enableDeterministicSync: 'enableDeterministicSync',
+    diceCanBeFlipped: 'diceCanBeFlipped',
+    allowInteractivity: 'allowInteractivity',
+    immediatelyDisplayChatMessages: 'immediatelyDisplayChatMessages',
+    forceCharacterOwnerAppearanceForInitiative: 'forceCharacterOwnerAppearanceForInitiative',
     formatVersion: 'formatVersion',
   },
   client: {
@@ -50,6 +54,8 @@ export const SETTING_KEYS = {
     settings: 'settings',
     appearance: 'appearance',
     sfxList: 'sfxList',
+    systemSettingsList: 'systemSettingsList',
+    welcomeMessageShown: 'welcomeMessageShown',
     saves: 'saves',
   },
   menus: {
@@ -64,4 +70,7 @@ export const HOOK_NAMES = {
   rollStart: ['diceTowerRollStart', 'diceSoNiceRollStart'],
   rollComplete: ['diceTowerRollComplete', 'diceSoNiceRollComplete'],
   messageProcessed: ['diceTowerMessageProcessed', 'diceSoNiceMessageProcessed'],
+  onMaterialReady: ['diceTowerOnMaterialReady', 'diceSoNiceOnMaterialReady'],
+  modelLoaded: ['diceTowerModelLoaded', 'diceSoNiceModelLoaded'],
+  shaderOnBeforeCompile: ['diceTowerShaderOnBeforeCompile', 'diceSoNiceShaderOnBeforeCompile'],
 } as const;

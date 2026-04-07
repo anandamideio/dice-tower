@@ -19,6 +19,10 @@
   pointer-events: none;
 }
 
+.dsn-hide {
+  display: none !important;
+}
+
 .dice-tower-config,
 .dice-tower-rollable-area {
   display: flex;

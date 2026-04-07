@@ -30,13 +30,20 @@ import {
   getClientSettingsSnapshot,
   getWorldSettingsSnapshot,
   setClientSettingsPatch,
+  setClientSetting,
 } from '../config/register-settings.js';
+import {
+  DEFAULT_CLIENT_SETTINGS,
+} from '../config/settings-schema.js';
 import {
   applyUserSaveProfile,
   getMergedSfxListForUser,
   getUserAppearanceFlags,
+  getUserSettingsFlags,
+  getUserSfxFlags,
+  getUserSystemSettingsFlags,
 } from '../config/user-flags.js';
-import { MODULE_ID } from '../config/constants.js';
+import { MODULE_ID, HOOK_NAMES } from '../config/constants.js';
 import type { IDice3D, IDiceBox, IDiceFactory, IDiceSFXClass, IDiceSystem } from './dice3d.js';
 
 const OVERLAY_ID = `${MODULE_ID}-overlay`;
@@ -637,7 +644,11 @@ export class Dice3DRuntime implements IDice3D {
       }
     } finally {
       chatMessage._dice3danimating = false;
+      chatMessage._dice3dMessageHidden = false;
+      chatMessage._dice3dRollsHidden = undefined;
+      chatMessage._dice3dCountNewRolls = undefined;
       this.refreshCanInteract();
+      this.revealChatMessage(chatMessage);
     }
   }
 
@@ -807,6 +818,187 @@ export class Dice3DRuntime implements IDice3D {
     return this.diceFactoryRuntime.systems;
   }
 
+  // ── show() — lower-level display from raw notation data (Dice So Nice compat) ──
+
+  async show(
+    data: { throws: unknown[] } & Record<string, unknown>,
+    user: User = game.user,
+    synchronize = false,
+    users: string[] | null = null,
+    blind?: boolean,
+  ): Promise<boolean> {
+    if (!data.throws) {
+      throw new Error('Roll data should be not null');
+    }
+
+    if (!data.throws.length || !this.isEnabled()) {
+      return false;
+    }
+
+    const isBlind = blind === true;
+
+    if (isBlind) {
+      return false;
+    }
+
+    const notation = data as unknown as DiceNotationData;
+    const messageId = `dice-tower-${Date.now().toString(36)}`;
+
+    return this.playNotation(
+      notation,
+      messageId,
+      {
+        roll: this.createSyntheticRoll(),
+        user,
+        blind: isBlind,
+      },
+      {
+        broadcast: synchronize && user.id === game.user.id,
+        whisperTargets: this.normalizeWhisperTargets(users),
+        blind: isBlind,
+        senderUser: user,
+      },
+    );
+  }
+
+  // ── waitFor3DAnimationByMessageID() — wait for a specific message animation ──
+
+  waitFor3DAnimationByMessageID(targetMessageId: string): Promise<boolean> {
+    if (!this.isEnabled()) {
+      return Promise.resolve(true);
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const hookName = HOOK_NAMES.rollComplete[0];
+
+      function buildHook(): void {
+        Hooks.once(hookName, (...args: unknown[]) => {
+          const messageId = args[0] as string;
+          if (targetMessageId === messageId) {
+            resolve(true);
+          } else {
+            buildHook();
+          }
+        });
+      }
+
+      buildHook();
+    });
+  }
+
+  // ── update() — programmatically update DiceBox settings ──
+
+  update(settings: Record<string, unknown>): void {
+    void this.boxRuntime.update(settings as Partial<DiceBoxConfig>);
+  }
+
+  // ── showExtraDiceByDefault() — change the showExtraDice default ──
+
+  showExtraDiceByDefault(show = true): void {
+    void setClientSetting('showExtraDice', show);
+  }
+
+  // ── enableDebugMode() — enable debug rendering ──
+
+  enableDebugMode(): void {
+    (this.boxRuntime as unknown as { debugMode?: boolean }).debugMode = true;
+  }
+
+  // ── Static-style config accessors (Dice So Nice backward compatibility) ──
+
+  CONFIG(user: User = game.user): Record<string, unknown> {
+    const userSettings = getUserSettingsFlags(user);
+    const merged = { ...DEFAULT_CLIENT_SETTINGS, ...userSettings };
+    const asRecord = merged as unknown as Record<string, unknown>;
+    delete asRecord.appearance;
+    delete asRecord.sfxLine;
+    return asRecord;
+  }
+
+  ALL_CONFIG(user: User = game.user): Record<string, unknown> {
+    const config = this.CONFIG(user);
+    config.appearance = getUserAppearanceFlags(user);
+    config.specialEffects = getUserSfxFlags(user);
+    return config;
+  }
+
+  APPEARANCE(user: User = game.user): Record<string, unknown> {
+    return getUserAppearanceFlags(user) as unknown as Record<string, unknown>;
+  }
+
+  DEFAULT_APPEARANCE(user: User = game.user): Record<string, unknown> {
+    const userColor = user.color?.toString?.() || '#000000';
+    return {
+      global: {
+        labelColor: '#ffffff',
+        diceColor: userColor,
+        outlineColor: userColor,
+        edgeColor: userColor,
+        texture: 'none',
+        material: 'auto',
+        font: 'auto',
+        colorset: 'custom',
+        system: 'standard',
+      },
+    };
+  }
+
+  get DEFAULT_OPTIONS(): Record<string, unknown> {
+    return { ...DEFAULT_CLIENT_SETTINGS } as unknown as Record<string, unknown>;
+  }
+
+  ALL_DEFAULT_OPTIONS(user: User = game.user): Record<string, unknown> {
+    const options = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      appearance: this.DEFAULT_APPEARANCE(user),
+    } as unknown as Record<string, unknown>;
+
+    const appearance = options.appearance as Record<string, Record<string, unknown>>;
+    if (appearance.global) {
+      appearance.global.system = this.diceFactoryRuntime.preferredSystem;
+      appearance.global.colorset = this.diceFactoryRuntime.preferredColorset;
+    }
+
+    return options;
+  }
+
+  SFX(user: User = game.user): unknown[] {
+    if (this.clientSettings.showOthersSFX || user.id === game.user.id) {
+      return getUserSfxFlags(user);
+    }
+    return [];
+  }
+
+  SYSTEM_SETTINGS(user: User = game.user): unknown[] {
+    if (user.id === game.user.id) {
+      return getUserSystemSettingsFlags(user);
+    }
+    return [];
+  }
+
+  ALL_CUSTOMIZATION(user: User = game.user, dicefactory?: IDiceFactory | null): Record<string, unknown> {
+    const specialEffects = getMergedSfxListForUser(user, {
+      viewer: game.user,
+      includeOthers: this.clientSettings.showOthersSFX,
+    });
+
+    const config = this.ALL_CONFIG(user) as Record<string, unknown>;
+    config.specialEffects = specialEffects;
+
+    const factory = dicefactory ?? this.diceFactoryRuntime;
+    const appearance = config.appearance as Record<string, Record<string, unknown>> | undefined;
+    if (appearance?.global && factory) {
+      if (factory.preferredSystem !== 'standard') {
+        appearance.global.system = factory.preferredSystem;
+      }
+      if (factory.preferredColorset !== 'custom') {
+        appearance.global.colorset = factory.preferredColorset;
+      }
+    }
+
+    return config;
+  }
+
   dispose(): void {
     this.resizeListener?.();
     this.resizeListener = null;
@@ -861,7 +1053,7 @@ export class Dice3DRuntime implements IDice3D {
       throwingForce: this.clientSettings.throwingForce,
       speed: this.resolveAnimationSpeed(),
       hideAfterRoll: this.clientSettings.hideAfterRoll,
-      allowInteractivity: true,
+      allowInteractivity: this.worldSettings.allowInteractivity,
       maxDiceNumber: this.worldSettings.maxDiceNumber,
       queueMergeWindowMs,
       sounds: this.clientSettings.sounds,
@@ -889,6 +1081,21 @@ export class Dice3DRuntime implements IDice3D {
     this.resizeListener = () => {
       window.removeEventListener('resize', onResize);
     };
+  }
+
+  private revealChatMessage(chatMessage: ChatMessage): void {
+    const messageId = chatMessage.id;
+    if (!messageId) {
+      return;
+    }
+
+    const messageElement = document.querySelector(`.chat-message[data-message-id="${messageId}"]`);
+    if (!messageElement) {
+      return;
+    }
+
+    messageElement.classList.remove('dsn-hide');
+    messageElement.querySelectorAll('.dsn-hide').forEach((el) => el.classList.remove('dsn-hide'));
   }
 
   private refreshCanInteract(): void {

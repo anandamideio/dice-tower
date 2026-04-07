@@ -129,6 +129,38 @@ export const WORLD_SETTINGS_SCHEMA: Record<WorldSettingKey, SettingSchemaEntry<u
     name: 'DICETOWER.Settings.enableDeterministicSync.Name',
     hint: 'DICETOWER.Settings.enableDeterministicSync.Hint',
   },
+  diceCanBeFlipped: {
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: true,
+    name: 'DICETOWER.Settings.diceCanBeFlipped.Name',
+    hint: 'DICETOWER.Settings.diceCanBeFlipped.Hint',
+  },
+  allowInteractivity: {
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: true,
+    name: 'DICETOWER.Settings.allowInteractivity.Name',
+    hint: 'DICETOWER.Settings.allowInteractivity.Hint',
+  },
+  immediatelyDisplayChatMessages: {
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: false,
+    name: 'DICETOWER.Settings.immediatelyDisplayChatMessages.Name',
+    hint: 'DICETOWER.Settings.immediatelyDisplayChatMessages.Hint',
+  },
+  forceCharacterOwnerAppearanceForInitiative: {
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: true,
+    name: 'DICETOWER.Settings.forceCharacterOwnerAppearanceForInitiative.Name',
+    hint: 'DICETOWER.Settings.forceCharacterOwnerAppearanceForInitiative.Hint',
+  },
   formatVersion: {
     scope: 'world',
     config: false,
@@ -393,6 +425,11 @@ export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
   enabledSimultaneousRollForMessage:
     WORLD_SETTINGS_SCHEMA.enabledSimultaneousRollForMessage.default as boolean,
   enableDeterministicSync: WORLD_SETTINGS_SCHEMA.enableDeterministicSync.default as boolean,
+  diceCanBeFlipped: WORLD_SETTINGS_SCHEMA.diceCanBeFlipped.default as boolean,
+  allowInteractivity: WORLD_SETTINGS_SCHEMA.allowInteractivity.default as boolean,
+  immediatelyDisplayChatMessages: WORLD_SETTINGS_SCHEMA.immediatelyDisplayChatMessages.default as boolean,
+  forceCharacterOwnerAppearanceForInitiative:
+    WORLD_SETTINGS_SCHEMA.forceCharacterOwnerAppearanceForInitiative.default as boolean,
 };
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = {

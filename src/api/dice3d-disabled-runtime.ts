@@ -199,4 +199,67 @@ export class Dice3DDisabledRuntime implements IDice3D {
   getLoadedDiceSystems(): Map<string, IDiceSystem> {
     return this.DiceFactory.systems;
   }
+
+  show(
+    _data: { throws: unknown[] } & Record<string, unknown>,
+    _user?: User,
+    _synchronize?: boolean,
+    _users?: string[] | null,
+    _blind?: boolean,
+  ): Promise<boolean> {
+    this.warnOnce();
+    return Promise.resolve(false);
+  }
+
+  waitFor3DAnimationByMessageID(_targetMessageId: string): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
+  update(_settings: Record<string, unknown>): void {
+    // No-op in disabled mode.
+  }
+
+  showExtraDiceByDefault(_show?: boolean): void {
+    // No-op in disabled mode.
+  }
+
+  enableDebugMode(): void {
+    // No-op in disabled mode.
+  }
+
+  CONFIG(_user?: User): Record<string, unknown> {
+    return { enabled: false };
+  }
+
+  ALL_CONFIG(_user?: User): Record<string, unknown> {
+    return { enabled: false, appearance: {}, specialEffects: [] };
+  }
+
+  APPEARANCE(_user?: User): Record<string, unknown> {
+    return { global: { ...DEFAULT_DISABLED_APPEARANCE } };
+  }
+
+  DEFAULT_APPEARANCE(_user?: User): Record<string, unknown> {
+    return { global: { ...DEFAULT_DISABLED_APPEARANCE } };
+  }
+
+  get DEFAULT_OPTIONS(): Record<string, unknown> {
+    return { enabled: false };
+  }
+
+  ALL_DEFAULT_OPTIONS(_user?: User): Record<string, unknown> {
+    return { enabled: false, appearance: { global: { ...DEFAULT_DISABLED_APPEARANCE } } };
+  }
+
+  SFX(_user?: User): unknown[] {
+    return [];
+  }
+
+  SYSTEM_SETTINGS(_user?: User): unknown[] {
+    return [];
+  }
+
+  ALL_CUSTOMIZATION(_user?: User, _dicefactory?: IDiceFactory | null): Record<string, unknown> {
+    return { enabled: false, appearance: {}, specialEffects: [] };
+  }
 }

@@ -49,6 +49,14 @@ export interface WorldSettings {
   enabledSimultaneousRollForMessage: boolean;
   /** Use socket-transmitted throw parameters for deterministic multiplayer replay. */
   enableDeterministicSync: boolean;
+  /** Allow dice to be flipped after settling. */
+  diceCanBeFlipped: boolean;
+  /** GM toggle for mouse interaction with dice. */
+  allowInteractivity: boolean;
+  /** Display chat messages immediately without waiting for animation to finish. */
+  immediatelyDisplayChatMessages: boolean;
+  /** Use the character owner's dice appearance for initiative rolls. */
+  forceCharacterOwnerAppearanceForInitiative: boolean;
 }
 
 /** Client-scoped settings (per-user). */

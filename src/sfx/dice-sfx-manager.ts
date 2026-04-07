@@ -68,6 +68,20 @@ function wait(delayMs: number): Promise<void> {
   });
 }
 
+function readUserFlagSafe(user: RuntimeUserLike, scope: string, key: string): unknown {
+  try {
+    return user.getFlag(scope, key);
+  } catch {
+    const candidate = user as unknown as { flags?: Record<string, unknown> };
+    const scopeFlags = candidate.flags?.[scope];
+    if (!scopeFlags || typeof scopeFlags !== 'object') {
+      return undefined;
+    }
+
+    return (scopeFlags as Record<string, unknown>)[key];
+  }
+}
+
 export class DiceSFXManager {
   private readonly sfxModeClasses: SFXClassRecord = {
     ...BUILTIN_SFX_MODE_CLASSES,
@@ -338,7 +352,9 @@ export class DiceSFXManager {
   }
 
   private readSFXListFromFlags(user: RuntimeUserLike): SFXLine[] {
-    const payload = user.getFlag('dice-so-nice', 'sfxList') ?? user.getFlag('dice-tower', 'sfxList');
+    const payload =
+      readUserFlagSafe(user, 'dice-so-nice', 'sfxList')
+      ?? readUserFlagSafe(user, 'dice-tower', 'sfxList');
 
     if (Array.isArray(payload)) {
       return payload.filter((entry): entry is SFXLine => this.isSFXLine(entry));

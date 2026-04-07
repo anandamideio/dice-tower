@@ -178,6 +178,20 @@ function notify(level: 'info' | 'warn' | 'error', message: string): void {
   }
 }
 
+function mergeApplicationOptions(
+  base: ApplicationOptions,
+  overrides: ApplicationOptions,
+): ApplicationOptions {
+  if (typeof foundry !== 'undefined' && foundry.utils?.mergeObject) {
+    return foundry.utils.mergeObject({ ...base }, overrides, {
+      recursive: true,
+      overwrite: true,
+    }) as ApplicationOptions;
+  }
+
+  return { ...base, ...overrides };
+}
+
 function toSelectOptions(
   values: Record<string, string>,
   fallbackPrefix: string,
@@ -358,7 +372,7 @@ async function refreshRuntimeFromSettings(): Promise<void> {
 
 export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
   static override get defaultOptions(): ApplicationOptions {
-    return {
+    return mergeApplicationOptions(super.defaultOptions, {
       id: `${MODULE_ID}-config`,
       title: 'DICETOWER.Menu.DiceConfig.Title',
       template: 'modules/dice-tower/assets/templates/dice-config.hbs',
@@ -368,7 +382,7 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
       submitOnChange: false,
       submitOnClose: false,
       classes: ['dice-tower-config-app'],
-    };
+    });
   }
 
   override getData(): Record<string, unknown> {
@@ -707,7 +721,7 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
 
 export class RollableAreaConfigMenuApp extends FormApplication<FormDataObject> {
   static override get defaultOptions(): ApplicationOptions {
-    return {
+    return mergeApplicationOptions(super.defaultOptions, {
       id: `${MODULE_ID}-rollable-area-config`,
       title: 'DICETOWER.Menu.RollableAreaConfig.Title',
       template: 'modules/dice-tower/assets/templates/rollable-area-config.hbs',
@@ -717,7 +731,7 @@ export class RollableAreaConfigMenuApp extends FormApplication<FormDataObject> {
       submitOnChange: false,
       submitOnClose: false,
       classes: ['dice-tower-rollable-area-app'],
-    };
+    });
   }
 
   override getData(): Record<string, unknown> {

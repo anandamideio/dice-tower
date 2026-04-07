@@ -63,6 +63,20 @@ export type BeforeShaderCompileCallback = (
   appearance: Record<string, unknown>,
 ) => void;
 
+function readUserFlagSafe<T>(user: User, scope: string, key: string): T | undefined {
+  try {
+    return user.getFlag(scope, key) as T | undefined;
+  } catch {
+    const candidate = user as unknown as { flags?: Record<string, unknown> };
+    const scopeFlags = candidate.flags?.[scope];
+    if (!scopeFlags || typeof scopeFlags !== 'object') {
+      return undefined;
+    }
+
+    return (scopeFlags as Record<string, unknown>)[key] as T | undefined;
+  }
+}
+
 /**
  * Dice preset entry stored in the system's dice map.
  */
@@ -186,9 +200,9 @@ export class DiceSystem {
     );
     this._scopedSettings.set('global', defaults);
 
-    const saved = game.user.getFlag('dice-so-nice', 'appearance') as
-      | Record<string, Record<string, unknown>>
-      | undefined;
+    const saved =
+      readUserFlagSafe<Record<string, Record<string, unknown>>>(game.user, 'dice-so-nice', 'appearance')
+      ?? readUserFlagSafe<Record<string, Record<string, unknown>>>(game.user, 'dice-tower', 'appearance');
     if (saved) {
       for (const diceType of Object.keys(saved)) {
         const entry = saved[diceType];

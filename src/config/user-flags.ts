@@ -46,14 +46,35 @@ function cloneDefaultAppearance(user: User): AppearanceMap {
   } as AppearanceMap;
 }
 
-function readFlag<T>(user: User, key: string): T | undefined {
-  const local = user.getFlag(MODULE_ID, key);
-  if (local !== undefined) {
-    return local as T;
+function readRawFlag<T>(user: User, scope: string, key: string): T | undefined {
+  const candidate = user as unknown as {
+    flags?: Record<string, unknown>;
+  };
+
+  const scopeFlags = candidate.flags?.[scope];
+  if (!scopeFlags || typeof scopeFlags !== 'object') {
+    return undefined;
   }
 
-  const legacy = user.getFlag(LEGACY_MODULE_ID, key);
-  return legacy as T | undefined;
+  return (scopeFlags as Record<string, unknown>)[key] as T | undefined;
+}
+
+function readFlagSafe<T>(user: User, scope: string, key: string): T | undefined {
+  try {
+    return user.getFlag(scope, key) as T | undefined;
+  } catch {
+    // Foundry can reject legacy scopes that are no longer active modules.
+    return readRawFlag<T>(user, scope, key);
+  }
+}
+
+function readFlag<T>(user: User, key: string): T | undefined {
+  const local = readFlagSafe<T>(user, MODULE_ID, key);
+  if (local !== undefined) {
+    return local;
+  }
+
+  return readFlagSafe<T>(user, LEGACY_MODULE_ID, key);
 }
 
 function toArraySfx(value: unknown): SFXLine[] {

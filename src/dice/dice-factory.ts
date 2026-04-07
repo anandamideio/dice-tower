@@ -160,12 +160,15 @@ export class DiceFactory implements IDiceFactory {
   }
 
   addDicePreset(dice: DicePresetData, shape: string | null = null): void {
+    const labels = normalizePresetLabels((dice as { labels?: unknown }).labels, dice);
+    const values = normalizePresetValues((dice as { values?: unknown }).values, dice.type, dice);
+
     const normalized: DicePresetData = {
       ...dice,
       shape: (shape ?? dice.shape ?? DEFAULT_SHAPES[dice.type] ?? 'd6') as DieShape,
       scale: dice.scale ?? DEFAULT_DICE_SCALES[dice.type] ?? 1,
-      labels: [...dice.labels],
-      values: [...dice.values],
+      labels,
+      values,
       system: dice.system ?? 'standard',
     };
 
@@ -483,4 +486,105 @@ function defaultValuesForType(dieType: DieType): number[] {
   const numericFaces = Number.parseInt(dieType.slice(1), 10);
   const faces = Number.isFinite(numericFaces) && numericFaces > 0 ? numericFaces : 6;
   return Array.from({ length: faces }, (_, index) => index + 1);
+}
+
+function normalizePresetLabels(source: unknown, context: unknown): (string | string[])[] {
+  const resolved = resolvePresetProperty(source, context);
+
+  if (Array.isArray(resolved)) {
+    return resolved.map(normalizeLabelValue);
+  }
+
+  if (typeof resolved === 'string') {
+    return [resolved];
+  }
+
+  if (isIterableUnknown(resolved)) {
+    return Array.from(resolved).map(normalizeLabelValue);
+  }
+
+  return [];
+}
+
+function normalizePresetValues(source: unknown, dieType: DieType, context: unknown): number[] {
+  const resolved = resolvePresetProperty(source, context);
+  const normalized = normalizeNumericList(resolved);
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const min = getNumericField(resolved, 'min');
+  const max = getNumericField(resolved, 'max');
+  if (min !== null && max !== null && Number.isInteger(min) && Number.isInteger(max) && max >= min) {
+    return Array.from({ length: max - min + 1 }, (_, index) => min + index);
+  }
+
+  return defaultValuesForType(dieType);
+}
+
+function resolvePresetProperty(source: unknown, context: unknown): unknown {
+  if (typeof source !== 'function') {
+    return source;
+  }
+
+  try {
+    return source.call(context);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeNumericList(source: unknown): number[] {
+  if (typeof source === 'number' && Number.isFinite(source)) {
+    return [source];
+  }
+
+  if (typeof source === 'string') {
+    const parsed = Number(source);
+    return Number.isFinite(parsed) ? [parsed] : [];
+  }
+
+  if (Array.isArray(source) || isIterableUnknown(source)) {
+    const rawValues = Array.isArray(source) ? source : Array.from(source);
+    return rawValues
+      .map((value) => (typeof value === 'number' ? value : Number(value)))
+      .filter((value) => Number.isFinite(value));
+  }
+
+  return [];
+}
+
+function normalizeLabelValue(value: unknown): string | string[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry));
+  }
+
+  return String(value);
+}
+
+function isIterableUnknown(value: unknown): value is Iterable<unknown> {
+  if (value === null || value === undefined || typeof value === 'string') {
+    return false;
+  }
+
+  return Symbol.iterator in Object(value);
+}
+
+function getNumericField(source: unknown, key: 'min' | 'max'): number | null {
+  if (typeof source !== 'object' || source === null) {
+    return null;
+  }
+
+  const value = source[key as keyof typeof source];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }

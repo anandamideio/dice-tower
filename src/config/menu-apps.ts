@@ -701,6 +701,10 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
           worldInput.enabledSimultaneousRollForMessage,
           currentWorld.enabledSimultaneousRollForMessage,
         ),
+        enableDeterministicSync: parseBoolean(
+          worldInput.enableDeterministicSync,
+          currentWorld.enableDeterministicSync,
+        ),
       };
 
       for (const key of Object.keys(worldNext) as Array<keyof WorldSettings>) {

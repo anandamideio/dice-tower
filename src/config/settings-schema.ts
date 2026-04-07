@@ -121,6 +121,14 @@ export const WORLD_SETTINGS_SCHEMA: Record<WorldSettingKey, SettingSchemaEntry<u
     name: 'DICETOWER.Settings.enabledSimultaneousRollForMessage.Name',
     hint: 'DICETOWER.Settings.enabledSimultaneousRollForMessage.Hint',
   },
+  enableDeterministicSync: {
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: false,
+    name: 'DICETOWER.Settings.enableDeterministicSync.Name',
+    hint: 'DICETOWER.Settings.enableDeterministicSync.Hint',
+  },
   formatVersion: {
     scope: 'world',
     config: false,
@@ -384,6 +392,7 @@ export const DEFAULT_WORLD_SETTINGS: WorldSettings = {
   enabledSimultaneousRolls: WORLD_SETTINGS_SCHEMA.enabledSimultaneousRolls.default as boolean,
   enabledSimultaneousRollForMessage:
     WORLD_SETTINGS_SCHEMA.enabledSimultaneousRollForMessage.default as boolean,
+  enableDeterministicSync: WORLD_SETTINGS_SCHEMA.enableDeterministicSync.default as boolean,
 };
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = {

@@ -1,6 +1,8 @@
 import type { AppearanceMap, DiceAppearance } from '../types/appearance.js';
 import type { SFXLine } from '../types/dice.js';
+import type { UpdateMessage } from '../types/network.js';
 import type { ClientSettings } from '../types/settings.js';
+import { emitDiceTowerSocketMessage } from '../network/index.js';
 import { LEGACY_MODULE_ID, MODULE_ID, SETTING_KEYS } from './constants.js';
 
 export interface DiceSaveProfile {
@@ -77,6 +79,18 @@ function readFlag<T>(user: User, key: string): T | undefined {
   return readFlagSafe<T>(user, LEGACY_MODULE_ID, key);
 }
 
+function emitLocalAppearanceOrSfxUpdate(user: User): void {
+  if (user.id !== game.user.id) {
+    return;
+  }
+
+  const payload: UpdateMessage = {
+    type: 'update',
+    user: user.id,
+  };
+  emitDiceTowerSocketMessage(payload);
+}
+
 function toArraySfx(value: unknown): SFXLine[] {
   if (Array.isArray(value)) {
     return value.filter((line): line is SFXLine => {
@@ -145,6 +159,7 @@ export async function setUserAppearanceFlags(
   user: User = game.user,
 ): Promise<void> {
   await user.setFlag(MODULE_ID, SETTING_KEYS.flags.appearance, appearance);
+  emitLocalAppearanceOrSfxUpdate(user);
 }
 
 export function getUserSfxFlags(user: User = game.user): SFXLine[] {
@@ -153,6 +168,7 @@ export function getUserSfxFlags(user: User = game.user): SFXLine[] {
 
 export async function setUserSfxFlags(lines: SFXLine[], user: User = game.user): Promise<void> {
   await user.setFlag(MODULE_ID, SETTING_KEYS.flags.sfxList, lines);
+  emitLocalAppearanceOrSfxUpdate(user);
 }
 
 export function getMergedSfxListForUser(

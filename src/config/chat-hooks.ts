@@ -208,6 +208,10 @@ function shouldInterceptMessage(chatMessage: ChatMessage, rolls: Roll[]): boolea
 
   const worldSettings = getWorldSettingsSnapshot();
 
+  if (worldSettings.enableDeterministicSync && chatMessage.user.id !== game.user.id) {
+    return false;
+  }
+
   if (worldSettings.disabledDuringCombat && isCombatActive()) {
     return false;
   }

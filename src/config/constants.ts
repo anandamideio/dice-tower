@@ -16,6 +16,7 @@ export const SETTING_KEYS = {
     animateInlineRoll: 'animateInlineRoll',
     enabledSimultaneousRolls: 'enabledSimultaneousRolls',
     enabledSimultaneousRollForMessage: 'enabledSimultaneousRollForMessage',
+    enableDeterministicSync: 'enableDeterministicSync',
     formatVersion: 'formatVersion',
   },
   client: {

@@ -1,4 +1,4 @@
-import RAPIER_MODULE from '@dimforge/rapier3d';
+import * as RAPIER_MODULE from '@dimforge/rapier3d';
 
 import type { DieShape, DieType } from '../types/dice.js';
 import type {
@@ -16,7 +16,7 @@ import type {
 import { DICE_SHAPE_DEFINITIONS, getFaceIndices } from './dice-shape-definitions.js';
 
 type RapierModuleWithInit = typeof import('@dimforge/rapier3d') & {
-  init: () => Promise<void>;
+  init?: () => Promise<void>;
 };
 
 const RAPIER = RAPIER_MODULE as RapierModuleWithInit;
@@ -229,7 +229,9 @@ export class PhysicsEngine {
 
   async init(config: PhysicsConfig): Promise<void> {
     if (!this.initialized) {
-      await RAPIER.init();
+      if (typeof RAPIER.init === 'function') {
+        await RAPIER.init();
+      }
       this.initialized = true;
     }
 

@@ -23,11 +23,11 @@ const RAPIER = RAPIER_MODULE as RapierModuleWithInit;
 
 const GRAVITY_Z = -9.8 * 800;
 const FIXED_TIMESTEP = 1 / 60;
-const MAX_SIMULATION_STEPS = 1000;
-const MIN_SIMULATION_STEPS = 45;
-const SETTLE_REQUIRED_STEPS = 12;
-const LINEAR_SETTLE_THRESHOLD = 4;
-const ANGULAR_SETTLE_THRESHOLD = 4;
+const MAX_SIMULATION_STEPS = 480;
+const MIN_SIMULATION_STEPS = 30;
+const SETTLE_REQUIRED_STEPS = 8;
+const LINEAR_SETTLE_THRESHOLD = 14;
+const ANGULAR_SETTLE_THRESHOLD = 14;
 const SPAWN_STAGGER_STEPS = 15;
 const SPAWN_STAGGER_JITTER_STEPS = 3;
 const COLLISION_DEBOUNCE_STEPS = 2;
@@ -810,16 +810,50 @@ export class PhysicsEngine {
     const colliderA = this.world!.getCollider(colliderHandleA);
     const colliderB = this.world!.getCollider(colliderHandleB);
 
+    if (!colliderA || !colliderB) {
+      const dieA = this.colliderToDiceId.get(colliderHandleA);
+      const dieB = this.colliderToDiceId.get(colliderHandleB);
+
+      const stateA = dieA ? this.diceBodies.get(dieA) : null;
+      const stateB = dieB ? this.diceBodies.get(dieB) : null;
+
+      if (stateA && stateB) {
+        const posA = stateA.body.translation();
+        const posB = stateB.body.translation();
+        return {
+          x: (posA.x + posB.x) / 2,
+          y: (posA.y + posB.y) / 2,
+          z: (posA.z + posB.z) / 2,
+        };
+      }
+
+      if (stateA) {
+        const pos = stateA.body.translation();
+        return { x: pos.x, y: pos.y, z: pos.z };
+      }
+
+      if (stateB) {
+        const pos = stateB.body.translation();
+        return { x: pos.x, y: pos.y, z: pos.z };
+      }
+
+      return { x: 0, y: 0, z: 0 };
+    }
+
     let point: Vec3 | null = null;
 
-    this.world!.contactPair(colliderA, colliderB, (manifold) => {
-      if (point) return;
+    try {
+      this.world!.contactPair(colliderA, colliderB, (manifold) => {
+        if (point) return;
 
-      if (manifold.numSolverContacts() > 0) {
-        const p = manifold.solverContactPoint(0);
-        point = { x: p.x, y: p.y, z: p.z };
-      }
-    });
+        if (manifold.numSolverContacts() > 0) {
+          const p = manifold.solverContactPoint(0);
+          point = { x: p.x, y: p.y, z: p.z };
+        }
+      });
+    } catch {
+      point = null;
+    }
 
     if (point) {
       return point;
@@ -837,31 +871,35 @@ export class PhysicsEngine {
 
   private collectCollisionEvents(frame: number, collisions: CollisionEvent[]): void {
     this.eventQueue!.drainContactForceEvents((event) => {
-      const colliderA = event.collider1();
-      const colliderB = event.collider2();
-      const classified = this.classifyCollision(colliderA, colliderB);
-      if (!classified) return;
+      try {
+        const colliderA = event.collider1();
+        const colliderB = event.collider2();
+        const classified = this.classifyCollision(colliderA, colliderB);
+        if (!classified) return;
 
-      const thresholded = this.shouldEmitCollision(
-        frame,
-        classified.type,
-        event.totalForceMagnitude(),
-        classified.bodyA,
-        classified.bodyB,
-      );
-      if (!thresholded.emit) return;
+        const thresholded = this.shouldEmitCollision(
+          frame,
+          classified.type,
+          event.totalForceMagnitude(),
+          classified.bodyA,
+          classified.bodyB,
+        );
+        if (!thresholded.emit) return;
 
-      collisions.push({
-        frame,
-        type: classified.type,
-        bodyA: classified.bodyA,
-        bodyB: classified.bodyB,
-        contactPoint: this.getContactPoint(colliderA, colliderB),
-        impulse: thresholded.impulse,
-      });
+        collisions.push({
+          frame,
+          type: classified.type,
+          bodyA: classified.bodyA,
+          bodyB: classified.bodyB,
+          contactPoint: this.getContactPoint(colliderA, colliderB),
+          impulse: thresholded.impulse,
+        });
 
-      this.lastCollisionFrame = frame;
-      this.lastCollisionType = classified.type;
+        this.lastCollisionFrame = frame;
+        this.lastCollisionType = classified.type;
+      } catch {
+        // Drop malformed collision events rather than aborting the simulation worker.
+      }
     });
   }
 

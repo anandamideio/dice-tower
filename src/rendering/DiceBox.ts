@@ -990,13 +990,52 @@ export class DiceBox {
     };
   }
 
+  private async recoverPhysicsClientAfterSimulationError(
+    config: PhysicsConfig,
+    error: unknown,
+  ): Promise<PhysicsRuntimeClient | null> {
+    const detail = error instanceof Error ? error.message : String(error);
+    const looksRecoverable = /runtimeerror|unreachable|wasm|physics worker/i.test(detail);
+    if (!looksRecoverable) {
+      return null;
+    }
+
+    if (!this.ownsPhysicsClient) {
+      return null;
+    }
+
+    console.warn(
+      'dice-tower | Physics simulation failed. Recreating physics worker and retrying once.',
+      error,
+    );
+
+    try {
+      this.physicsClient?.destroy();
+    } catch {
+      // Ignore teardown failures and continue with a clean worker.
+    }
+
+    this.physicsClient = new PhysicsWorkerClient() as unknown as PhysicsRuntimeClient;
+
+    try {
+      await this.physicsClient.init(config);
+      this.physicsUnavailable = false;
+      this.physicsFailureNotified = false;
+      return this.physicsClient;
+    } catch (initError) {
+      console.error('dice-tower | Physics worker recovery failed.', initError);
+      this.physicsUnavailable = true;
+      return null;
+    }
+  }
+
   private async runThrow(notation: DiceNotationData, options?: DiceBoxAddOptions): Promise<boolean> {
     if (!this.runtimeReady) {
       throw new Error('DiceBox runtime is not ready. Call configureRuntime() first.');
     }
 
     const diceFactory = this.diceFactory;
-    const physicsClient = this.physicsClient;
+    let physicsClient = this.physicsClient;
     if (!diceFactory || !physicsClient) {
       throw new Error('DiceBox runtime dependencies are missing.');
     }
@@ -1168,7 +1207,19 @@ export class DiceBox {
 
     options?.captureThrowParams?.(params);
 
-    const simulation = await physicsClient.simulate(params);
+    let simulation: SimulationResult;
+    try {
+      simulation = await physicsClient.simulate(params);
+    } catch (error) {
+      const recoveredClient = await this.recoverPhysicsClientAfterSimulationError(simulationConfig, error);
+      if (!recoveredClient) {
+        throw error;
+      }
+
+      physicsClient = recoveredClient;
+      simulation = await physicsClient.simulate(params);
+    }
+
     this.setupPlayback(simulation);
 
     this.show();

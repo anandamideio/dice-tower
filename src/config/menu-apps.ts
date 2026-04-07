@@ -604,6 +604,12 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
     const expanded = expandFormData(extractFormData(form));
     const preview = toRecord(expanded.preview);
     const formula = parseString(preview.formula, '1d20');
+    const overlayHost = document.getElementById(`${MODULE_ID}-overlay`);
+    const previousOverlayZIndex = overlayHost?.style.zIndex ?? '';
+    if (overlayHost) {
+      // Keep preview visible while the configuration window is open above the board.
+      overlayHost.style.zIndex = '9999';
+    }
 
     try {
       const roll = await createRollFromFormula(formula);
@@ -621,10 +627,20 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
       const appearance = buildAppearanceMapFromExpanded(expanded);
       applyAppearanceToRoll(roll, appearance);
 
-      await runtime.showForRoll(roll, game.user, false, null, false, null, null, {
+      const rendered = await runtime.showForRoll(roll, game.user, false, null, false, null, null, {
         ghost: false,
         secret: false,
       });
+
+      if (!rendered) {
+        notify(
+          'warn',
+          localizeOrFallback(
+            'DICETOWER.Notifications.PreviewBlocked',
+            'Preview roll was blocked by current Dice Tower settings.',
+          ),
+        );
+      }
     } catch (error) {
       console.error(`${MODULE_ID} | Failed to preview roll.`, error);
       notify(
@@ -634,6 +650,10 @@ export class DiceConfigMenuApp extends FormApplication<FormDataObject> {
           'Failed to preview roll. Check the formula and console for details.',
         ),
       );
+    } finally {
+      if (overlayHost) {
+        overlayHost.style.zIndex = previousOverlayZIndex;
+      }
     }
   }
 

@@ -117,42 +117,46 @@ export class PhysicsWorkerClient {
   }
 
   private handleMessage = (event: MessageEvent<PhysicsWorkerResponse | PhysicsWorkerError>): void => {
-    const message = event.data;
+    try {
+      const message = event.data;
 
-    if (message.type === 'error') {
-      this.rejectPending(new Error(message.detail));
-      return;
-    }
+      if (message.type === 'error') {
+        this.rejectPending(new Error(message.detail));
+        return;
+      }
 
-    switch (message.type) {
-      case 'ready': {
-        if (this.pendingInit) {
-          this.pendingInit.resolve();
-          this.pendingInit = null;
+      switch (message.type) {
+        case 'ready': {
+          if (this.pendingInit) {
+            this.pendingInit.resolve();
+            this.pendingInit = null;
+          }
+          break;
         }
-        break;
-      }
 
-      case 'simulated': {
-        if (this.pendingSimulate) {
-          this.pendingSimulate.resolve(message.result);
-          this.pendingSimulate = null;
+        case 'simulated': {
+          if (this.pendingSimulate) {
+            this.pendingSimulate.resolve(message.result);
+            this.pendingSimulate = null;
+          }
+          break;
         }
-        break;
-      }
 
-      case 'step': {
-        if (this.pendingStep) {
-          this.pendingStep.resolve(message.result);
-          this.pendingStep = null;
+        case 'step': {
+          if (this.pendingStep) {
+            this.pendingStep.resolve(message.result);
+            this.pendingStep = null;
+          }
+          break;
         }
-        break;
-      }
 
-      default: {
-        const _exhaustive: never = message;
-        throw new Error(`Unhandled worker response: ${String(_exhaustive)}`);
+        default: {
+          const _exhaustive: never = message;
+          throw new Error(`Unhandled worker response: ${String(_exhaustive)}`);
+        }
       }
+    } catch (error) {
+      this.rejectPending(error instanceof Error ? error : new Error(String(error)));
     }
   };
 

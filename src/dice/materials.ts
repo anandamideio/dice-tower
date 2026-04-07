@@ -97,7 +97,9 @@ const MATERIAL_PROFILES: Record<MaterialType, MaterialProfile> = {
 };
 
 function createLowQualityMaterial(options: DiceMaterialCreateOptions): MeshPhongMaterial {
-  const color = new Color(options.color || '#ffffff');
+  // The albedo map is already fully composited (base color + texture + labels),
+  // so keep material tint neutral to avoid multiplying labels into black.
+  const color = new Color('#ffffff');
   const material = new MeshPhongMaterial({
     color,
     map: options.map,
@@ -124,7 +126,8 @@ export function createDiceMaterial(options: DiceMaterialCreateOptions): Material
 
   const profile = MATERIAL_PROFILES[options.materialType];
   const common = {
-    color: new Color(options.color || '#ffffff'),
+    // Keep base tint neutral because color is baked into the composed map.
+    color: new Color('#ffffff'),
     map: options.map,
     bumpMap: options.bumpMap,
     roughnessMap: options.roughnessMap,

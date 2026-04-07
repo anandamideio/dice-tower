@@ -12,6 +12,34 @@ import type { AppearanceMap } from './appearance.js';
 /** Sync mode for dice animation across clients. */
 export type SyncMode = 'classic' | 'deterministic';
 
+/** Compact deterministic payload body representation. */
+export interface CompressedThrowBody {
+  id: string;
+  shape: ThrowParams['bodies'][number]['shape'];
+  type: ThrowParams['bodies'][number]['type'];
+  m: number;
+  i: number;
+  p: [number, number, number];
+  v: [number, number, number];
+  a: [number, number, number];
+  r: [number, number, number, number];
+  /** Delta from previous body's startAtIteration (first entry uses absolute value). */
+  s?: number;
+  /** Secret-roll marker (1 = true). */
+  h?: 1;
+}
+
+/** Compact deterministic throw payload optimized for socket bandwidth. */
+export interface CompressedThrowParams {
+  kind: 'compressed';
+  seed: number;
+  config: ThrowParams['config'];
+  bodies: CompressedThrowBody[];
+}
+
+/** Deterministic payload can be sent as raw ThrowParams or compressed form. */
+export type SyncThrowPayload = ThrowParams | CompressedThrowParams;
+
 /**
  * Classic "show" broadcast — each client simulates independently
  * and face-swaps to match the result.
@@ -46,7 +74,9 @@ export interface SyncRollMessage {
   /** Chat message ID. */
   messageId: string | null;
   /** Full throw parameters for deterministic replay. */
-  throwParams: ThrowParams;
+  throwParams: SyncThrowPayload;
+  /** Parsed dice notation with desired roll results. */
+  notation: DiceNotationData;
   /** The roller's customization config. */
   dsnConfig: {
     appearance: AppearanceMap;

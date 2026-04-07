@@ -47,6 +47,8 @@ export interface WorldSettings {
   enabledSimultaneousRolls: boolean;
   /** Merge simultaneous rolls within the same chat message. */
   enabledSimultaneousRollForMessage: boolean;
+  /** Use socket-transmitted throw parameters for deterministic multiplayer replay. */
+  enableDeterministicSync: boolean;
 }
 
 /** Client-scoped settings (per-user). */

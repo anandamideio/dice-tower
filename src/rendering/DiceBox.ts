@@ -75,7 +75,7 @@ import type { SoundsSurface } from '../types/settings.js';
 import { mergeQueuedRollCommands } from '../dice/dice-notation.js';
 import { PhysicsWorkerClient } from '../physics/physics-worker-client.js';
 import { DICE_SHAPE_DEFINITIONS, getFaceIndices } from '../physics/dice-shape-definitions.js';
-import type { IDiceFactory, IDiceSFXClass } from '../api/dice3d.js';
+import type { IDiceFactory, IDiceSFXClass, IDiceSystem } from '../api/dice3d.js';
 import type { DiceMeshRef } from '../api/dice-sfx.js';
 import { SoundManager, type CollisionDieMetadata } from '../audio/sound-manager.js';
 import { DiceSFXManager } from '../sfx/dice-sfx-manager.js';
@@ -175,6 +175,14 @@ const DEFAULT_MAX_DICE = 100;
 const DEFAULT_QUEUE_MERGE_WINDOW_MS = 80;
 const FACE_SWAP_BLEND_FRAMES = 10;
 
+const DICE_SYSTEM_EVENT_TYPE = {
+  SPAWN: 0,
+  CLICK: 1,
+  RESULT: 2,
+  COLLIDE: 3,
+  DESPAWN: 4,
+} as const;
+
 export interface DiceBoxRuntimeOptions {
   diceFactory: IDiceFactory;
   physics?: PhysicsWorkerClient;
@@ -190,8 +198,14 @@ export interface DiceBoxRuntimeOptions {
   muteSoundSecretRolls?: boolean;
 }
 
+export interface DiceBoxAddOptions {
+  throwParams?: ThrowParams;
+  captureThrowParams?: (params: ThrowParams) => void;
+}
+
 interface DiceThrowCommand {
   notation: DiceNotationData;
+  options?: DiceBoxAddOptions;
   resolve: (value: boolean) => void;
   reject: (reason?: unknown) => void;
 }
@@ -201,6 +215,7 @@ interface ActiveDie {
   throwIndex: number;
   die: DieResult;
   shape: DieShape;
+  systemId: string;
   startAtIteration: number;
   group: Group;
   mesh: Mesh;
@@ -229,6 +244,7 @@ interface DiceFactoryRuntime {
   getMesh(dieType: DieResult['type'], overrides?: Partial<DiceAppearance>): Promise<Mesh>;
   setEnvironmentMaps?: (envMap: unknown, roughnessMaps: Record<string, unknown>) => void;
   setMaterialQuality?: (quality: 'low' | 'high') => void;
+  systems: Map<string, IDiceSystem>;
 }
 
 interface PhysicsRuntimeClient {
@@ -735,9 +751,9 @@ export class DiceBox {
     };
   }
 
-  add(notation: DiceNotationData): Promise<boolean> {
+  add(notation: DiceNotationData, options?: DiceBoxAddOptions): Promise<boolean> {
     return new Promise<boolean>((resolve, reject) => {
-      this.commandQueue.push({ notation, resolve, reject });
+      this.commandQueue.push({ notation, options, resolve, reject });
       this.scheduleQueueFlush();
     });
   }
@@ -793,6 +809,11 @@ export class DiceBox {
     this.interactionOffset.copy(hit.point).sub(die.group.position);
     this.physicsClient.addConstraint({ x: hit.point.x, y: hit.point.y, z: hit.point.z });
 
+    this.emitDiceSystemEvent(die, DICE_SYSTEM_EVENT_TYPE.CLICK, {
+      dice: die.group,
+      position: hit.point.clone(),
+    });
+
     this.outlineObjects.length = 0;
     this.outlineObjects.push(die.group);
     this.show();
@@ -826,10 +847,7 @@ export class DiceBox {
     this.activeResolveBatch = [];
     this.sfxManager.clearQueue();
 
-    for (const die of this.activeDice) {
-      this.scene.remove(die.group);
-    }
-    this.activeDice = [];
+    this.clearActiveDiceFromScene();
 
     this.outlineObjects.length = 0;
     this.renderScene();
@@ -868,8 +886,24 @@ export class DiceBox {
     const batch = this.commandQueue.splice(0, this.commandQueue.length);
 
     try {
+      const hasDeterministicOptions = batch.some(
+        (command) => command.options?.throwParams || command.options?.captureThrowParams,
+      );
+
+      if (hasDeterministicOptions) {
+        for (const command of batch) {
+          try {
+            const result = await this.runThrow(command.notation, command.options);
+            command.resolve(result);
+          } catch (error) {
+            command.reject(error);
+          }
+        }
+        return;
+      }
+
       const merged = mergeQueuedRollCommands(batch.map((command) => ({ notation: command.notation })));
-      const result = await this.runThrow(merged);
+      const result = await this.runThrow(merged, undefined);
       for (const command of batch) {
         command.resolve(result);
       }
@@ -885,12 +919,11 @@ export class DiceBox {
     }
   }
 
-  private async ensurePhysicsInitialized(): Promise<void> {
+  private async ensurePhysicsInitialized(config: PhysicsConfig = this.getPhysicsConfig()): Promise<void> {
     if (!this.physicsClient) {
       throw new Error('Physics runtime is not configured. Call configureRuntime() first.');
     }
 
-    const config = this.getPhysicsConfig();
     await this.physicsClient.init(config);
   }
 
@@ -903,7 +936,7 @@ export class DiceBox {
     };
   }
 
-  private async runThrow(notation: DiceNotationData): Promise<boolean> {
+  private async runThrow(notation: DiceNotationData, options?: DiceBoxAddOptions): Promise<boolean> {
     if (!this.runtimeReady) {
       throw new Error('DiceBox runtime is not ready. Call configureRuntime() first.');
     }
@@ -919,7 +952,10 @@ export class DiceBox {
       return true;
     }
 
-    await this.ensurePhysicsInitialized();
+    const providedThrowParams = options?.throwParams;
+    const simulationConfig = providedThrowParams?.config ?? this.getPhysicsConfig();
+
+    await this.ensurePhysicsInitialized(simulationConfig);
 
     this.cancelAutoHide();
     this.clearActiveDiceFromScene();
@@ -939,17 +975,35 @@ export class DiceBox {
       );
     }
 
-    const seed = (Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    const expectedBodyCount = effectiveThrows.reduce(
+      (count, throwGroup) => count + throwGroup.dice.length,
+      0,
+    );
+
+    const providedBodies = providedThrowParams?.bodies;
+    const useProvidedBodies =
+      Array.isArray(providedBodies) && providedBodies.length === expectedBodyCount;
+
+    if (providedBodies && !useProvidedBodies) {
+      console.warn(
+        `DiceBox received ${providedBodies.length} deterministic bodies for ${expectedBodyCount} dice; falling back to classic simulation.`,
+      );
+    }
+
+    const seed = providedThrowParams?.seed
+      ?? ((Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
     const rng = new Mulberry32(seed);
 
     const bodies: DiceBodyDef[] = [];
     const activeDice: ActiveDie[] = [];
+    this.activeDice = activeDice;
 
     let bodyCounter = 0;
+    let providedBodyIndex = 0;
 
     for (let throwIndex = 0; throwIndex < effectiveThrows.length; throwIndex += 1) {
       const throwGroup = effectiveThrows[throwIndex];
-      const basis = this.createThrowVectorBasis(rng);
+      const basis = useProvidedBodies ? null : this.createThrowVectorBasis(rng);
 
       for (let dieIndex = 0; dieIndex < throwGroup.dice.length; dieIndex += 1) {
         const die = throwGroup.dice[dieIndex];
@@ -958,35 +1012,58 @@ export class DiceBox {
         const meshUserData = mesh.userData as Record<string, unknown>;
 
         const fallbackShape = ((meshUserData.shape as DieShape | undefined) ?? 'd6');
-        const shape = shapeForDieType(die.type, fallbackShape);
+        let body: DiceBodyDef;
 
-        const bodyId = `die-${bodyCounter.toString(36)}-${Math.floor(rng.next() * 1_000_000).toString(36)}`;
-        bodyCounter += 1;
+        if (useProvidedBodies && providedBodies) {
+          const providedBody = providedBodies[providedBodyIndex];
+          providedBodyIndex += 1;
+          if (!providedBody) {
+            throw new Error('Deterministic throw payload is missing body definitions.');
+          }
+          body = providedBody;
+        } else {
+          const shape = shapeForDieType(die.type, fallbackShape);
+          const bodyId = `die-${bodyCounter.toString(36)}-${Math.floor(rng.next() * 1_000_000).toString(36)}`;
+          bodyCounter += 1;
 
-        const body = this.createBodyDefinition({
-          id: bodyId,
-          die,
-          shape,
-          throwIndex,
-          basis,
-          rng,
-          mesh,
-        });
+          body = this.createBodyDefinition({
+            id: bodyId,
+            die,
+            shape,
+            throwIndex,
+            basis: basis ?? this.createThrowVectorBasis(rng),
+            rng,
+            mesh,
+          });
+        }
+
+        const shape = shapeForDieType(die.type, body.shape);
+        const bodyId = body.id;
+        const systemId = typeof meshUserData.system === 'string'
+          ? meshUserData.system
+          : (typeof appearance.system === 'string' ? appearance.system : 'standard');
 
         const group = new Group();
         group.add(mesh);
-        group.visible = body.startAtIteration === 0;
+        group.visible = (body.startAtIteration ?? 0) === 0;
         group.position.set(body.position.x, body.position.y, body.position.z);
         group.quaternion.set(body.rotation.x, body.rotation.y, body.rotation.z, body.rotation.w);
+        group.userData = {
+          ...group.userData,
+          diceBodyId: bodyId,
+          throwIndex,
+          system: systemId,
+        };
         this.scene.add(group);
 
         meshUserData.diceBodyId = bodyId;
         meshUserData.throwIndex = throwIndex;
+        meshUserData.system = systemId;
 
         this.bodyCollisionAudio.set(bodyId, {
           dieType: die.type,
           material: typeof meshUserData.material === 'string' ? meshUserData.material : 'plastic',
-          secretRoll: die.options.secret === true,
+          secretRoll: body.secretRoll === true || die.options.secret === true,
         });
 
         bodies.push(body);
@@ -995,6 +1072,7 @@ export class DiceBox {
           throwIndex,
           die,
           shape,
+          systemId,
           startAtIteration: body.startAtIteration ?? 0,
           group,
           mesh,
@@ -1002,16 +1080,28 @@ export class DiceBox {
           finalQuaternion: group.quaternion.clone(),
           correctedQuaternion: null,
         });
+
+        this.emitDiceSystemEvent(activeDice[activeDice.length - 1], DICE_SYSTEM_EVENT_TYPE.SPAWN, {
+          dice: group,
+        });
       }
     }
 
     this.activeDice = activeDice;
 
+    if (useProvidedBodies && providedBodies && providedBodyIndex !== providedBodies.length) {
+      console.warn(
+        `DiceBox consumed ${providedBodyIndex} deterministic bodies but received ${providedBodies.length}; proceeding with consumed set.`,
+      );
+    }
+
     const params: ThrowParams = {
       seed,
       bodies,
-      config: this.getPhysicsConfig(),
+      config: simulationConfig,
     };
+
+    options?.captureThrowParams?.(params);
 
     const simulation = await physicsClient.simulate(params);
     this.setupPlayback(simulation);
@@ -1257,6 +1347,9 @@ export class DiceBox {
 
   private clearActiveDiceFromScene(): void {
     for (const die of this.activeDice) {
+      this.emitDiceSystemEvent(die, DICE_SYSTEM_EVENT_TYPE.DESPAWN, {
+        dice: die.group,
+      });
       this.scene.remove(die.group);
     }
     this.activeDice = [];
@@ -1386,6 +1479,10 @@ export class DiceBox {
       } else {
         die.group.quaternion.copy(die.finalQuaternion);
       }
+
+      this.emitDiceSystemEvent(die, DICE_SYSTEM_EVENT_TYPE.RESULT, {
+        dice: die.group,
+      });
     }
 
     this.playback = null;
@@ -1450,8 +1547,49 @@ export class DiceBox {
       bodyB: event.bodyB ? this.bodyCollisionAudio.get(event.bodyB) : undefined,
     });
 
+    const dieA = this.activeDice.find((die) => die.bodyId === event.bodyA);
+    if (dieA) {
+      this.emitDiceSystemEvent(dieA, DICE_SYSTEM_EVENT_TYPE.COLLIDE, {
+        dice: dieA.group,
+        collision: event,
+      });
+    }
+
+    if (event.bodyB) {
+      const dieB = this.activeDice.find((die) => die.bodyId === event.bodyB);
+      if (dieB && dieB.bodyId !== dieA?.bodyId) {
+        this.emitDiceSystemEvent(dieB, DICE_SYSTEM_EVENT_TYPE.COLLIDE, {
+          dice: dieB.group,
+          collision: event,
+        });
+      }
+    }
+
     for (const listener of this.collisionListeners) {
       listener(event);
+    }
+  }
+
+  private emitDiceSystemEvent(
+    die: ActiveDie,
+    eventType: number,
+    event: Record<string, unknown>,
+  ): void {
+    const systems = this.diceFactory?.systems;
+    if (!(systems instanceof Map)) {
+      return;
+    }
+
+    const system = systems.get(die.systemId);
+    const fire = (system as { fire?: (type: number, data: unknown) => void } | undefined)?.fire;
+    if (typeof fire !== 'function') {
+      return;
+    }
+
+    try {
+      fire(eventType, event);
+    } catch (error) {
+      console.warn(`DiceBox system event ${eventType} failed for ${die.systemId}.`, error);
     }
   }
 
@@ -2215,6 +2353,7 @@ export class DiceBox {
     this.cancelAutoHide();
     this.stopAnimating();
     this.cancelQueueFlush();
+    this.clearActiveDiceFromScene();
 
     for (const command of this.commandQueue) {
       command.reject(new Error('DiceBox disposed before queued roll could start.'));

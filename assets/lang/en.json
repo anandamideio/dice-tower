@@ -83,6 +83,8 @@
   "DICETOWER.Settings.enabledSimultaneousRolls.Hint": "Combine close-in-time rolls into one animation sequence.",
   "DICETOWER.Settings.enabledSimultaneousRollForMessage.Name": "Merge Rolls In Same Message",
   "DICETOWER.Settings.enabledSimultaneousRollForMessage.Hint": "Combine rolls from the same chat message into one animation.",
+  "DICETOWER.Settings.enableDeterministicSync.Name": "Enable Deterministic Multiplayer Sync",
+  "DICETOWER.Settings.enableDeterministicSync.Hint": "Broadcast throw parameters so all clients replay the same physics trajectory.",
   "DICETOWER.Settings.formatVersion.Name": "Data Format Version",
   "DICETOWER.Settings.formatVersion.Hint": "Internal migration format marker.",
   "DICETOWER.Settings.enabled.Name": "Enabled",

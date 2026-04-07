@@ -22,6 +22,7 @@
     "three": "^0.183.2"
   },
   "devDependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.17.1",
     "@types/three": "^0.183.1",

@@ -190,23 +190,19 @@ export class DiceFactory implements IDiceFactory {
     mode: string | boolean = 'default',
   ): void {
     const resolvedMode = normalizeSystemMode(mode);
+    const modeWasProvided = arguments.length >= 2;
 
     const normalized: IDiceSystem = looksLikeDiceSystemInstance(system)
       ? system
       : new DiceSystem(system.id, system.name, resolvedMode, system.group ?? null);
 
-    const mutableSystem = normalized as {
-      mode?: string;
-      group?: string | null;
-      loadSettings?: () => void;
-    };
-
-    const effectiveMode = typeof mutableSystem.mode === 'string' ? mutableSystem.mode : resolvedMode;
-    mutableSystem.mode = effectiveMode;
-    mutableSystem.group = mutableSystem.group ?? normalized.group ?? null;
+    const systemMode = (normalized as { mode?: unknown }).mode;
+    const effectiveMode = modeWasProvided
+      ? resolvedMode
+      : (typeof systemMode === 'string' ? systemMode : resolvedMode);
 
     this.systems.set(normalized.id, normalized);
-    mutableSystem.loadSettings?.();
+    (normalized as { loadSettings?: () => void }).loadSettings?.();
 
     for (const preset of this.presets.values()) {
       if (preset.system === normalized.id) {

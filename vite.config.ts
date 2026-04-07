@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
   ];
 
   return {
+    base: './',
     plugins: [
       wasm(),
       viteStaticCopy({

@@ -689,15 +689,23 @@ export class Dice3DRuntime implements IDice3D {
     let capturedThrowParams: ThrowParams | undefined;
 
     this.refreshCanInteract();
-    const rendered = await this.boxRuntime.add(notation, {
-      throwParams: playbackOptions?.throwParams,
-      captureThrowParams: playbackOptions?.broadcast
-        ? (params) => {
-          capturedThrowParams = params;
-        }
-        : undefined,
-    });
-    this.refreshCanInteract();
+    let rendered: boolean;
+
+    try {
+      rendered = await this.boxRuntime.add(notation, {
+        throwParams: playbackOptions?.throwParams,
+        captureThrowParams: playbackOptions?.broadcast
+          ? (params) => {
+            capturedThrowParams = params;
+          }
+          : undefined,
+      });
+    } catch (error) {
+      console.error(`${MODULE_ID} | Failed to render dice notation.`, error);
+      return false;
+    } finally {
+      this.refreshCanInteract();
+    }
 
     if (rendered) {
       emitDiceRollComplete(messageId);
@@ -810,6 +818,7 @@ export class Dice3DRuntime implements IDice3D {
     }
     this.syncRollQueue = [];
     this.boxRuntime.dispose();
+    this.diceFactoryRuntime.dispose();
     this.hostElement.remove();
   }
 

@@ -37,3 +37,5 @@ export {
 } from './hook-bridge.js';
 export { registerDiceTowerChatHooks } from './chat-hooks.js';
 export { DiceConfigMenuApp, RollableAreaConfigMenuApp } from './menu-apps.js';
+export { warmDiceTowerAssetsOnInit, getDiceTowerAssetWarmupPromise } from './asset-preload.js';
+export { maybeShowMigrationWelcome } from './migration-welcome.js';
